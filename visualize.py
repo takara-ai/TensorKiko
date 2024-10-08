@@ -1,27 +1,28 @@
-import argparse, asyncio, os, re, sys, logging, webbrowser, http.server, socketserver
+import argparse, asyncio, os, re, sys, logging, webbrowser, http.server, socketserver, torch
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Tuple, Any
-import torch
+from dataclasses import dataclass, field
 from anytree import Node
 from safetensors import safe_open
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
+@dataclass
 class ModelVisualizer:
-    def __init__(self, file_path: str, debug: bool, no_tree: bool, port: int, output_dir: str):
-        self.file_path = file_path
-        self.debug = debug
-        self.no_tree = no_tree
-        self.port = port
-        self.output_dir = output_dir
-        self.state_dict = {}
-        self.model_tree = None
-        self.tree_data = {}
-        self.total_params = 0
-        self.layer_types = {}
-        self.model_info = {}
+    file_path: str
+    debug: bool
+    no_tree: bool
+    port: int
+    output_dir: str
+    state_dict: Dict = field(default_factory=dict)
+    model_tree: Any = None
+    tree_data: Dict = field(default_factory=dict)
+    total_params: int = 0
+    layer_types: Dict = field(default_factory=dict)
+    model_info: Dict = field(default_factory=dict)
+
 
     async def load_safetensors(self) -> Dict[str, torch.Tensor]:
         if not os.path.exists(self.file_path) or not self.file_path.lower().endswith('.safetensors'):
@@ -149,9 +150,11 @@ class ModelVisualizer:
                 .nested {{ display: none; }}
                 .active {{ display: block; }}
                 #layer-info {{ position: fixed; bottom: 20px; right: 20px; background-color: #fff; border-radius: 10px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: none; max-width: 300px; }}
-                #search-container {{ margin-bottom: 10px; }}
+                #search-container {{ margin-bottom: 10px; position: relative; }}
                 #search {{ width: 100%; padding: 5px; }}
+                #search-results {{ position: absolute; right: 5px; top: 50%; transform: translateY(-50%); font-size: 0.8em; color: #666; }}
                 .highlight {{ background-color: yellow; }}
+                .current-highlight {{ background-color: orange; }}
             </style>
         </head>
         <body>
@@ -172,6 +175,7 @@ class ModelVisualizer:
                 </div>
                 <div id="search-container">
                     <input type="text" id="search" placeholder="Search for layers...">
+                    <span id="search-results"></span>
                 </div>
             </div>
             <div id="tree"><ul class="tree">{tree_html}</ul></div>
@@ -183,6 +187,7 @@ class ModelVisualizer:
                     const nodes = document.querySelectorAll('.node');
                     const layerInfo = document.getElementById('layer-info');
                     const searchInput = document.getElementById('search');
+                    const searchResults = document.getElementById('search-results');
 
                     // Set initial top margin for tree
                     tree.style.marginTop = `${{header.offsetHeight}}px`;
@@ -192,48 +197,61 @@ class ModelVisualizer:
                         tree.style.marginTop = `${{header.offsetHeight}}px`;
                     }});
 
-                    // Collapsible tree
+                    // Combined functionality for expanding/collapsing and showing info
                     tree.addEventListener('click', function(e) {{
-                        if (e.target.classList.contains('caret')) {{
-                            e.target.classList.toggle('caret-down');
-                            e.target.parentElement.nextElementSibling.classList.toggle('active');
-                            e.stopPropagation();
-                        }} else if (e.target.classList.contains('node')) {{
-                            // Remove 'selected' class from all nodes
+                        if (e.target.classList.contains('caret') || e.target.classList.contains('node')) {{
+                            const nodeElement = e.target.classList.contains('caret') ? e.target.parentElement : e.target;
+                            const nestedUl = nodeElement.nextElementSibling;
+                            
+                            // Toggle expand/collapse
+                            if (nestedUl) {{
+                                nestedUl.classList.toggle('active');
+                                const caret = nodeElement.querySelector('.caret');
+                                if (caret) caret.classList.toggle('caret-down');
+                            }}
+                            
+                            // Show node info
                             nodes.forEach(n => n.classList.remove('selected'));
-                            // Add 'selected' class to clicked node
-                            e.target.classList.add('selected');
-                            const params = e.target.dataset.params;
-                            const shape = e.target.dataset.shape;
-                            let infoHTML = `<h3>${{e.target.textContent.trim()}}</h3><p>Parameters: ${{params}}</p>`;
+                            nodeElement.classList.add('selected');
+                            const params = nodeElement.dataset.params;
+                            const shape = nodeElement.dataset.shape;
+                            let infoHTML = `<h3>${{nodeElement.textContent.trim()}}</h3><p>Parameters: ${{params}}</p>`;
                             if (shape) {{
                                 infoHTML += `<p>Shape: ${{shape}}</p><div id="shape-svg">${{generateShapeSVG(shape)}}</div>`;
                             }}
                             layerInfo.innerHTML = infoHTML;
                             layerInfo.style.display = 'block';
+                            
+                            e.stopPropagation();
                         }}
                     }});
 
                     document.addEventListener('click', (e) => {{
                         if (!e.target.closest('.node') && !e.target.closest('#layer-info')) {{
                             layerInfo.style.display = 'none';
-                            // Remove 'selected' class from all nodes when clicking outside
                             nodes.forEach(n => n.classList.remove('selected'));
                         }}
                     }});
 
-                    // Search functionality
+                    // Enhanced search functionality
                     searchInput.addEventListener('input', function() {{
                         const searchTerm = this.value.toLowerCase();
+                        let matchCount = 0;
                         let firstMatch = null;
                         
                         nodes.forEach(node => {{
+                            node.classList.remove('highlight', 'current-highlight');
                             const nodeText = node.textContent.toLowerCase();
                             const parent = node.closest('li');
                             const nestedUl = parent.querySelector('ul.nested');
                             
                             if (nodeText.includes(searchTerm)) {{
-                                if (!firstMatch) firstMatch = node;
+                                matchCount++;
+                                node.classList.add('highlight');
+                                if (!firstMatch) {{
+                                    firstMatch = node;
+                                    node.classList.add('current-highlight');
+                                }}
                                 expandParents(node);
                                 if (nestedUl) {{
                                     nestedUl.classList.add('active');
@@ -248,6 +266,8 @@ class ModelVisualizer:
                                 }}
                             }}
                         }});
+
+                        searchResults.textContent = searchTerm ? `${{matchCount}} result${{matchCount !== 1 ? 's' : ''}} found` : '';
 
                         if (firstMatch) {{
                             firstMatch.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
