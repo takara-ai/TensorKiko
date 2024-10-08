@@ -144,9 +144,8 @@ class ModelVisualizer:
                 .tree .node {{ display: inline-block; cursor: pointer; background-color: #fff; border: 2px solid #ddd; border-radius: var(--radius); padding: 0.5rem 1rem; margin: 0.5rem 0; transition: all 0.3s; }}
                 .tree .node:hover {{ background-color: #f0f0f0; transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
                 .tree .node.selected {{ background-color: #e6f3ff; border-color: #3498db; }}
-                .caret {{ cursor: pointer; user-select: none; }}
-                .caret::before {{ content: "\\25B6"; color: black; display: inline-block; margin-right: 6px; }}
-                .caret-down::before {{ transform: rotate(90deg); }}
+                .caret {{ cursor: pointer; user-select: none; display: inline-block; width: 0; height: 0; margin-right: 6px; vertical-align: middle; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid #333; transition: transform 0.2s; }}
+                .caret-down {{ transform: rotate(90deg); }}
                 .nested {{ display: none; }}
                 .active {{ display: block; }}
                 #layer-info {{ position: fixed; bottom: 20px; right: 20px; background-color: #fff; border-radius: 10px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: none; max-width: 300px; }}
@@ -195,7 +194,7 @@ class ModelVisualizer:
 
                     // Collapsible tree
                     tree.addEventListener('click', function(e) {{
-                        if (e.target.tagName === 'SPAN' && e.target.classList.contains('caret')) {{
+                        if (e.target.classList.contains('caret')) {{
                             e.target.classList.toggle('caret-down');
                             e.target.parentElement.nextElementSibling.classList.toggle('active');
                             e.stopPropagation();
@@ -206,7 +205,7 @@ class ModelVisualizer:
                             e.target.classList.add('selected');
                             const params = e.target.dataset.params;
                             const shape = e.target.dataset.shape;
-                            let infoHTML = `<h3>${{e.target.textContent.replace(/^▶/, '')}}</h3><p>Parameters: ${{params}}</p>`;
+                            let infoHTML = `<h3>${{e.target.textContent.trim()}}</h3><p>Parameters: ${{params}}</p>`;
                             if (shape) {{
                                 infoHTML += `<p>Shape: ${{shape}}</p><div id="shape-svg">${{generateShapeSVG(shape)}}</div>`;
                             }}
@@ -226,7 +225,7 @@ class ModelVisualizer:
                     // Search functionality
                     searchInput.addEventListener('input', function() {{
                         const searchTerm = this.value.toLowerCase();
-                        let foundMatch = false;
+                        let firstMatch = null;
                         
                         nodes.forEach(node => {{
                             const nodeText = node.textContent.toLowerCase();
@@ -234,26 +233,25 @@ class ModelVisualizer:
                             const nestedUl = parent.querySelector('ul.nested');
                             
                             if (nodeText.includes(searchTerm)) {{
-                                foundMatch = true;
-                                node.innerHTML = node.innerHTML.replace(
-                                    new RegExp(searchTerm, 'gi'),
-                                    match => `<span class="highlight">${{match}}</span>`
-                                );
+                                if (!firstMatch) firstMatch = node;
                                 expandParents(node);
                                 if (nestedUl) {{
                                     nestedUl.classList.add('active');
                                     const caret = node.querySelector('.caret');
                                     if (caret) caret.classList.add('caret-down');
                                 }}
-                            }} else {{
-                                node.innerHTML = node.innerHTML.replace(/<span class="highlight">(.+?)<\/span>/g, '$1');
-                                if (nestedUl && !searchTerm) {{
+                            }} else if (!searchTerm) {{
+                                if (nestedUl) {{
                                     nestedUl.classList.remove('active');
                                     const caret = node.querySelector('.caret');
                                     if (caret) caret.classList.remove('caret-down');
                                 }}
                             }}
                         }});
+
+                        if (firstMatch) {{
+                            firstMatch.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                        }}
                     }});
 
                     function expandParents(node) {{
