@@ -35,17 +35,20 @@ class ModelVisualizer:
 
     def create_tree_structure(self, state_dict: Dict[str, torch.Tensor]) -> Node:
         root = Node("Model", type="root")
-        nodes = {"": root}
         for key, tensor in state_dict.items():
             parts = key.split('.')
-            for i in range(len(parts)):
-                parent_path, current_path = '.'.join(parts[:i]), '.'.join(parts[:i+1])
-                if current_path not in nodes:
-                    nodes[current_path] = Node(parts[i], parent=nodes.get(parent_path, root),
-                                               type=parts[-2] if i == len(parts) - 1 else "layer",
-                                               params=tensor.numel() if i == len(parts) - 1 else 0,
-                                               shape=str(tensor.shape) if i == len(parts) - 1 else "")
+            parent = root
+            for i, part in enumerate(parts):
+                # Check if child exists
+                child = next((child for child in parent.children if child.name == part), None)
+                if not child:
+                    node_type = "layer" if i == len(parts) - 1 else "module"
+                    params = tensor.numel() if i == len(parts) - 1 else 0
+                    shape = str(tensor.shape) if i == len(parts) - 1 else ""
+                    child = Node(part, parent=parent, type=node_type, params=params, shape=shape)
+                parent = child
         return root
+
     
     def analyze_model_structure(self, state_dict: Dict[str, torch.Tensor]) -> Tuple[int, Dict[str, int]]:
         self.total_params = sum(tensor.numel() for tensor in state_dict.values())
