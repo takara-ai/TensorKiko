@@ -1,13 +1,19 @@
-import argparse, asyncio, os, re, sys, logging, webbrowser, http.server, socketserver, torch
-from collections import defaultdict
+import argparse
+import asyncio
+import os
+import re
+import sys
+import logging
+import webbrowser
+import http.server
+import socketserver
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Tuple, Any
 from dataclasses import dataclass, field
+from typing import Dict, Any
+import torch
 from anytree import Node
 from safetensors import safe_open
-
-logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
-logger = logging.getLogger(__name__)
+from collections import defaultdict
 
 @dataclass
 class ModelVisualizer:
@@ -16,112 +22,102 @@ class ModelVisualizer:
     no_tree: bool
     port: int
     output_dir: str
-    state_dict: Dict = field(default_factory=dict)
+    state_dict: Dict[str, torch.Tensor] = field(default_factory=dict)
     model_tree: Any = None
-    tree_data: Dict = field(default_factory=dict)
-    total_params: int = 0
-    layer_types: Dict = field(default_factory=dict)
-    model_info: Dict = field(default_factory=dict)
+    tree_data: Dict[str, Any] = field(default_factory=dict)
+    layer_types: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    model_info: Dict[str, Any] = field(default_factory=lambda: {
+        'total_params': 0,
+        'memory_usage': 0,
+        'precision': None,
+        'estimated_flops': 0
+    })
 
+    def __post_init__(self):
+        logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+        self.logger = logging.getLogger(self.__class__.__name__)
 
-    async def load_safetensors(self) -> Dict[str, torch.Tensor]:
+    async def load_and_process_safetensors(self) -> None:
         if not os.path.exists(self.file_path) or not self.file_path.lower().endswith('.safetensors'):
             raise ValueError(f"Invalid file: {self.file_path}")
         try:
             with safe_open(self.file_path, framework="pt", device="cpu") as f:
-                return {key: f.get_tensor(key) for key in f.keys()}
+                self.state_dict = {key: f.get_tensor(key) for key in f.keys()}
         except Exception as e:
-            raise ValueError(f"Failed to load the safetensors file: {str(e)}") from e
+            raise ValueError(f"Failed to load the safetensors file: {e}") from e
 
-    def create_tree_structure(self, state_dict: Dict[str, torch.Tensor]) -> Node:
         root = Node("Model", type="root")
-        for key, tensor in state_dict.items():
-            parts = key.split('.')
+        for key, tensor in self.state_dict.items():
             parent = root
-            for i, part in enumerate(parts):
-                # Check if child exists
-                child = next((child for child in parent.children if child.name == part), None)
+            for i, part in enumerate(key.split('.')):
+                child = next((c for c in parent.children if c.name == part), None)
                 if not child:
-                    node_type = "layer" if i == len(parts) - 1 else "module"
-                    params = tensor.numel() if i == len(parts) - 1 else 0
-                    shape = str(tensor.shape) if i == len(parts) - 1 else ""
-                    child = Node(part, parent=parent, type=node_type, params=params, shape=shape)
+                    node_type = "layer" if i == len(key.split('.')) - 1 else "module"
+                    child = Node(
+                        part,
+                        parent=parent,
+                        type=node_type,
+                        params=tensor.numel() if node_type == "layer" else 0,
+                        shape=str(tensor.shape) if node_type == "layer" else ""
+                    )
                 parent = child
-        return root
+        self.model_tree = root
 
-    
-    def analyze_model_structure(self, state_dict: Dict[str, torch.Tensor]) -> Tuple[int, Dict[str, int]]:
-        self.total_params = sum(tensor.numel() for tensor in state_dict.values())
-        self.layer_types = {}
-        self.model_info = {
-            'total_params': self.total_params,
-            'memory_usage': 0,
-            'precision': None,
-            'estimated_flops': 0
-        }
+        # Calculate total parameters and update model_info
+        self.model_info['total_params'] = sum(t.numel() for t in self.state_dict.values())
 
-        for key, tensor in state_dict.items():
+        for key, tensor in self.state_dict.items():
             parts = key.split('.')
             layer_type = parts[-2] if parts[-1] in {'weight', 'bias'} else parts[-1]
-            self.layer_types[layer_type] = self.layer_types.get(layer_type, 0) + 1
-
-            # Determine precision
-            if self.model_info['precision'] is None:
+            self.layer_types[layer_type] += 1
+            if not self.model_info['precision']:
                 self.model_info['precision'] = tensor.dtype
-
-            # Calculate memory usage
             self.model_info['memory_usage'] += tensor.numel() * tensor.element_size()
-
-            # Estimate FLOPs (simplified estimation)
-            if 'weight' in key and len(tensor.shape) == 4:  # Assume it's a conv layer
-                n, c, h, w = tensor.shape
-                self.model_info['estimated_flops'] += 2 * n * c * h * w * 224 * 224  # Assuming 224x224 input
-            elif 'weight' in key and len(tensor.shape) == 2:  # Assume it's a linear layer
-                m, n = tensor.shape
-                self.model_info['estimated_flops'] += 2 * m * n
-
-        # Convert memory usage to MB
-        self.model_info['memory_usage'] = self.model_info['memory_usage'] / (1024 * 1024)
-        return self.total_params, self.layer_types
-
+            if 'weight' in key:
+                if tensor.dim() == 4:
+                    n, c, h, w = tensor.shape
+                    self.model_info['estimated_flops'] += 2 * n * c * h * w * 224 * 224
+                elif tensor.dim() == 2:
+                    m, n = tensor.shape
+                    self.model_info['estimated_flops'] += 2 * m * n
+        self.model_info['memory_usage'] /= (1024 * 1024)
 
     def tree_to_dict(self, node: Node) -> Dict[str, Any]:
         return {
-            'name': node.name, 'type': getattr(node, 'type', 'unknown'),
-            'params': getattr(node, 'params', 0), 'shape': getattr(node, 'shape', ''),
+            'name': node.name,
+            'type': getattr(node, 'type', 'unknown'),
+            'params': getattr(node, 'params', 0),
+            'shape': getattr(node, 'shape', ''),
             'children': [self.tree_to_dict(child) for child in node.children] if node.children else None
         }
 
-    def generate_html(self, tree_data: Dict[str, Any], total_params: int, layer_types: Dict[str, int], model_name: str) -> str:
-        def format_shape(shape_str: str) -> str:
-            torch_match = re.match(r'torch\.Size\(\[(.*)\]\)', shape_str)
-            return ' × '.join(torch_match.group(1).split(', ')) if torch_match else shape_str
+    def generate_html(self, tree_data: Dict[str, Any], model_name: str) -> str:
+        def format_shape(s):
+            m = re.match(r'torch\.Size\(\[(.*)\]\)', s)
+            return ' × '.join(m.group(1).split(', ')) if m else s
 
-        def calculate_totals(node: Dict[str, Any]) -> Tuple[int, str]:
-            if not isinstance(node, dict): return 0, ""
-            params, shape, children = node.get('params', 0), node.get('shape', ''), node.get('children', [])
-            if children:
-                child_params = sum(calculate_totals(child)[0] for child in children)
-                node['total_params'] = child_params if params == 0 else child_params
-            else:
-                node['total_params'] = params
-            return params, shape
+        def calculate_totals(node):
+            if not node.get('children'):
+                node['total_params'] = node.get('params', 0)
+                return node['total_params']
+            node['total_params'] = sum(calculate_totals(child) for child in node['children'])
+            return node['total_params']
 
-        def generate_tree_html(node: Dict[str, Any], depth=0) -> str:
-            if not isinstance(node, dict): return ""
-            node_name, children = node.get('name', 'Unknown'), node.get('children', [])
-            params, total_params, shape = node.get('params', 0), node.get('total_params', 0), node.get('shape', '')
+        def generate_tree_html(node):
+            if not isinstance(node, dict):
+                return ""
+            name, children = node.get('name', 'Unknown'), node.get('children', [])
+            params, total_params, shape = node.get('params', 0), node.get('total_params', 0), format_shape(node.get('shape', ''))
             param_display = f"{params:,}" if params > 0 else f"Total: {total_params:,}"
-            formatted_shape = format_shape(shape)
             caret = '<span class="caret"></span>' if children else ''
-            html = f'<li><div class="node" data-params="{param_display}" data-shape="{formatted_shape}">{caret}{node_name}</div>'
+            html = f'<li><div class="node" data-params="{param_display}" data-shape="{shape}">{caret}{name}</div>'
             if children:
-                html += f'<ul class="nested">' + ''.join(generate_tree_html(child, depth + 1) for child in children) + '</ul>'
+                html += f'<ul class="nested">{"".join(generate_tree_html(child) for child in children)}</ul>'
             return html + '</li>'
 
         calculate_totals(tree_data)
         tree_html = generate_tree_html(tree_data)
-        layer_type_html = ''.join(f'<li>{layer}: {count}</li>' for layer, count in sorted(layer_types.items(), key=lambda x: x[1], reverse=True))
+        layer_type_html = ''.join(f'<li>{layer}: {count}</li>' for layer, count in sorted(self.layer_types.items(), key=lambda x: x[1], reverse=True))
 
         return f"""
         <!DOCTYPE html>
@@ -310,65 +306,58 @@ class ModelVisualizer:
         </body>
         </html>
         """
+
     def save_html(self, html_content: str, model_name: str) -> str:
         output_dir = self.output_dir or os.path.dirname(os.path.abspath(self.file_path))
         os.makedirs(output_dir, exist_ok=True)
-        html_file = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(self.file_path))[0]}_visualization.html")
+        base_name = os.path.splitext(os.path.basename(self.file_path))[0]
+        html_file = os.path.join(output_dir, f"{base_name}_visualization.html")
         with open(html_file, 'w') as f:
             f.write(html_content)
-        logger.info(f"HTML visualization generated: {html_file}")
+        self.logger.info(f"HTML visualization generated: {html_file}")
         return html_file
 
     def serve_html(self, html_file: str) -> None:
+        os.chdir(self.output_dir or os.path.dirname(os.path.abspath(self.file_path)))
         try:
-            os.chdir(self.output_dir or os.path.dirname(os.path.abspath(self.file_path)))
             with socketserver.TCPServer(("localhost", self.port), http.server.SimpleHTTPRequestHandler) as httpd:
-                url = f"http://localhost:{httpd.server_address[1]}/{os.path.basename(html_file)}"
-                logger.info(f"Serving visualization at {url}")
+                url = f"http://localhost:{self.port}/{os.path.basename(html_file)}"
+                self.logger.info(f"Serving visualization at {url}")
                 webbrowser.open(url)
-                logger.info("Press Ctrl+C to stop the server and exit.")
+                self.logger.info("Press Ctrl+C to stop the server and exit.")
                 httpd.serve_forever()
         except KeyboardInterrupt:
-            logger.info("\nServer stopped by user.")
-        except Exception as server_error:
-            logger.error(f"Error starting the server: {str(server_error)}")
-            logger.info(f"You can manually open the HTML file: {html_file}")
+            self.logger.info("\nServer stopped by user.")
+        except Exception as e:
+            self.logger.error(f"Error starting the server: {e}")
+            self.logger.info(f"You can manually open the HTML file: {html_file}")
 
     async def generate_visualization(self) -> None:
         try:
-            logger.info(f"Loading model from: {self.file_path}")
-            self.state_dict = await self.load_safetensors()
-            with ThreadPoolExecutor() as executor:
-                loop = asyncio.get_running_loop()
-                self.model_tree = await loop.run_in_executor(executor, self.create_tree_structure, self.state_dict)
-                await loop.run_in_executor(executor, self.analyze_model_structure, self.state_dict)
+            self.logger.info(f"Loading model from: {self.file_path}")
+            await self.load_and_process_safetensors()
             self.tree_data = self.tree_to_dict(self.model_tree)
             model_name = os.path.splitext(os.path.basename(self.file_path))[0]
-            html_content = self.generate_html(self.tree_data, self.total_params, self.layer_types, model_name)
+            html_content = self.generate_html(self.tree_data, model_name)
             html_file = self.save_html(html_content, model_name)
             self.serve_html(html_file)
         except Exception as e:
-            logger.error(f"Error: {str(e)}")
-            if self.debug: import traceback; traceback.print_exc()
+            self.logger.error(f"Error: {e}")
+            if self.debug:
+                import traceback
+                traceback.print_exc()
             sys.exit(1)
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Visualize and analyze the structure of a model stored in a safetensors file.")
+    parser = argparse.ArgumentParser(description="Visualize and analyze a safetensors model.")
     parser.add_argument("file_path", help="Path to the safetensors file")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode for detailed error information")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--no-tree", action="store_true", help="Disable tree visualization")
-    parser.add_argument("--port", type=int, default=8000, help="Port number for the local HTTP server (default: 8000)")
-    parser.add_argument("--output-dir", type=str, default="", help="Directory to save the HTML visualization")
+    parser.add_argument("--port", type=int, default=8000, help="HTTP server port (default: 8000)")
+    parser.add_argument("--output-dir", default="", help="Directory to save the HTML")
     args = parser.parse_args()
 
-    visualizer = ModelVisualizer(
-        file_path=args.file_path,
-        debug=args.debug,
-        no_tree=args.no_tree,
-        port=args.port,
-        output_dir=args.output_dir
-    )
+    visualizer = ModelVisualizer(**vars(args))
     asyncio.run(visualizer.generate_visualization())
 
 if __name__ == "__main__":
