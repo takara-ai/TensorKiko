@@ -49,12 +49,12 @@ jobs:
         env:
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          python -m pip install --upgrade twine
           python -m twine upload --non-interactive -u __token__ -p $PYPI_API_TOKEN dist/*
 
-      - name: Update Homebrew formula
-        env:
-          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
-        run: |
-          brew tap takara-ai/tensorkiko https://github.com/takara-ai/TensorKiko.git
-          brew bump-formula-pr --tag=${{ github.ref }} --revision=${{ github.sha }} tensorkiko
+    # Homebrew-related step commented out for now
+    # - name: Update Homebrew formula
+    #   env:
+    #     HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
+    #   run: |
+    #     brew tap takara-ai/tensorkiko https://github.com/takara-ai/TensorKiko.git
+    #     brew bump-formula-pr --tag=${{ github.ref }} --revision=${{ github.sha }} tensorkiko
