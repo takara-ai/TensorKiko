@@ -28,12 +28,17 @@ jobs:
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
-          token: ${{ secrets.PAT }}
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "::set-output name=VERSION::${GITHUB_REF#refs/tags/v}"
 
       - name: Upload Wheel Release Asset
         uses: actions/upload-release-asset@v1
@@ -41,8 +46,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/tensorkiko-${{ substr(github.ref_name, 1) }}-py3-none-any.whl
-          asset_name: tensorkiko-${{ substr(github.ref_name, 1) }}-py3-none-any.whl
+          asset_path: ./dist/tensorkiko-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl
+          asset_name: tensorkiko-${{ steps.get_version.outputs.VERSION }}-py3-none-any.whl
           asset_content_type: application/octet-stream
 
       - name: Upload Source Release Asset
@@ -51,8 +56,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/tensorkiko-${{ substr(github.ref_name, 1) }}.tar.gz
-          asset_name: tensorkiko-${{ substr(github.ref_name, 1) }}.tar.gz
+          asset_path: ./dist/tensorkiko-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          asset_name: tensorkiko-${{ steps.get_version.outputs.VERSION }}.tar.gz
           asset_content_type: application/gzip
 
       - name: Publish to PyPI
