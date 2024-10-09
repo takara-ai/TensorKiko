@@ -5,6 +5,9 @@
   --bg-color: #f0f0f0;
   --text-color: #333;
   --border-color: #ddd;
+  --header-height: 60px;
+  --header-bg-color: rgba(255, 255, 255, 0.95);
+  --anomaly-color: #d91009;
 }
 
 body {
@@ -20,12 +23,63 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  background-color: rgba(255, 255, 255, 0.95);
+  background-color: var(--header-bg-color);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  padding: 10px 20px;
   z-index: 1000;
+  transition: all 0.3s ease;
+}
+
+#header-top {
   display: flex;
-  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  height: var(--header-height);
+}
+
+#header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+#toggle-header {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.caret {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-left: 6px;
+  vertical-align: middle;
+  border: 6px solid transparent;
+  border-top-color: var(--text-color);
+  transition: transform 0.2s;
+}
+
+#header.expanded .caret {
+  transform: rotate(90deg);
+}
+
+#header-content {
+  max-height: calc(100vh - var(--header-height));
+  overflow-y: auto;
+  padding: 20px;
+  display: none;
+}
+
+#header.expanded #header-content {
+  display: block;
+}
+
+#header.expanded #toggle-header i {
+  transform: rotate(180deg);
 }
 
 #model-info {
@@ -81,6 +135,7 @@ body {
 
 #tree {
   padding: 20px;
+  margin-top: calc(var(--header-height) + 20px);
 }
 
 .tree li {

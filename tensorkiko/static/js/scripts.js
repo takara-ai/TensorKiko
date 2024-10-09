@@ -1,6 +1,7 @@
 // static/js/scripts.js
 document.addEventListener("DOMContentLoaded", () => {
   const header = document.getElementById("header");
+  const toggleHeader = document.getElementById("toggle-header");
   const tree = document.getElementById("tree");
   const nodes = document.querySelectorAll(".node");
   const layerInfo = document.getElementById("layer-info");
@@ -8,6 +9,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const searchResults = document.getElementById("search-results");
   const tensorStats = window.tensorStats; // Injected via backend
   const anomalies = window.anomalies; // Injected via backend
+
+  // Toggle header expansion
+  toggleHeader.addEventListener("click", () => {
+    header.classList.toggle("expanded");
+    updateTreeMargin();
+  });
+
+  // Update tree margin
+  function updateTreeMargin() {
+    const headerHeight = header.offsetHeight;
+    tree.style.marginTop = `${headerHeight + 20}px`;
+  }
+
+  // Initial margin update
+  updateTreeMargin();
+
+  // Update tree margin on window resize
+  window.addEventListener("resize", updateTreeMargin);
 
   // Function to generate SVG for tensor shapes
   function generateShapeSVG(shape) {

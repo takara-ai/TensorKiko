@@ -321,6 +321,19 @@ class ModelVisualizer:
                 self.logger.error(f"Error starting the server: {e}")
                 self.logger.info(f"You can manually open the HTML file: {url}")
 
+            with DebugHTTPServer(("", self.port), CustomHandler, debug=self.debug, html_content=self.html_content, tensor_stats=self.tensor_stats, anomalies=self.anomalies) as httpd:
+                url = f"http://localhost:{self.port}/"
+                self.logger.info(f"Serving visualization at {url}")
+                webbrowser.open(url)
+                self.logger.info("Press Ctrl+C to stop the server and exit.")
+                try:
+                    httpd.serve_forever()
+                except KeyboardInterrupt:
+                    self.logger.info("\nServer stopped by user.")
+                except Exception as e:
+                    self.logger.error(f"Error starting the server: {e}")
+                    self.logger.info(f"You can manually open the HTML file: {url}")
+
     def generate_visualization(self) -> None:
         try:
             self.logger.info("Loading models...")
@@ -335,7 +348,6 @@ class ModelVisualizer:
                 # Directly serve the HTML from memory
                 server_thread = threading.Thread(target=self.serve_html, daemon=True)
                 server_thread.start()
-                webbrowser.open_new_tab(f"http://localhost:{self.port}/")
                 server_thread.join()
         except Exception as e:
             self.logger.error(f"Error: {e}")
