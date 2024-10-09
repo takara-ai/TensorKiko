@@ -4,6 +4,7 @@ import sys
 import logging
 import webbrowser
 import http.server
+from http.server import SimpleHTTPRequestHandler
 import socketserver
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -17,7 +18,10 @@ import json
 from tqdm import tqdm  # For progress bars
 import re
 import threading
-from convert_ckpt_st import convert_ckpt_to_safetensors
+from urllib.parse import urlparse, parse_qs
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from pkg_resources import resource_filename
+from tensorkiko.convert_ckpt_st import convert_ckpt_to_safetensors
 
 @dataclass
 class ModelVisualizer:
@@ -42,10 +46,28 @@ class ModelVisualizer:
     anomalies: Dict[str, str] = field(default_factory=dict)
     html_content: str = ''  # Store the generated HTML content
 
+    template_env: Environment = field(init=False)
+
     def __post_init__(self):
         log_level = logging.DEBUG if self.debug else logging.INFO
         logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Use pkg_resources to find the template directory
+        template_dir = resource_filename('tensorkiko', 'static/templates')
+        
+        self.template_env = Environment(
+            loader=FileSystemLoader(searchpath=template_dir),
+            autoescape=select_autoescape(['html', 'xml'])
+        )
+
+        # Verify that the template file exists
+        template_path = os.path.join(template_dir, 'index.html')
+        if not os.path.exists(template_path):
+            self.logger.error(f"Template file not found: {template_path}")
+            raise FileNotFoundError(f"Template file not found: {template_path}")
+        else:
+            self.logger.debug(f"Template file found: {template_path}")
 
     def load_and_process_safetensors(self) -> None:
         for file_path in self.file_paths:
@@ -193,7 +215,6 @@ class ModelVisualizer:
 
         return stats
 
-
     def detect_anomalies(self, tensor_data: np.ndarray, stats: Dict[str, Any]) -> Optional[str]:
         if np.isnan(tensor_data).any() or np.isinf(tensor_data).any():
             return 'Contains NaN or Inf values'
@@ -221,7 +242,6 @@ class ModelVisualizer:
         }
 
     def generate_html(self, tree_data: Dict[str, Any], model_name: str) -> str:
-        
         def format_shape(s):
             m = re.match(r'torch\.Size\(\[(.*)\]\)', s)
             return ' × '.join(m.group(1).split(', ')) if m else s
@@ -258,430 +278,37 @@ class ModelVisualizer:
         # Aggregate precisions
         precisions = ', '.join(self.model_info['precisions'])
 
-        # Embed your custom CSS directly into the HTML
-        embedded_css = """
-        <style>
-            :root {
-              --spacing: 1.5rem;
-              --radius: 10px;
-              --primary-color: #3498db;
-              --bg-color: #f0f0f0;
-              --text-color: #333;
-              --border-color: #ddd;
-            }
-            
-            body {
-              font-family: Arial, sans-serif;
-              margin: 0;
-              padding: 0;
-              background-color: var(--bg-color);
-              color: var(--text-color);
-            }
-            
-            #header {
-              position: fixed;
-              top: 0;
-              left: 0;
-              right: 0;
-              background-color: rgba(255, 255, 255, 0.95);
-              box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-              padding: 10px 20px;
-              z-index: 1000;
-              display: flex;
-              flex-direction: column;
-            }
-            
-            #model-info {
-              display: flex;
-              flex-wrap: wrap;
-              justify-content: space-between;
-              align-items: flex-start;
-            }
-            
-            #model-details,
-            #layer-types-container {
-              flex: 1;
-              min-width: 200px;
-              margin-right: 20px;
-            }
-            
-            #layer-types {
-              font-size: 0.9em;
-              max-height: 150px;
-              overflow-y: auto;
-              list-style-type: none;
-              padding: 0;
-              margin: 0;
-              display: flex;
-              flex-wrap: wrap;
-            }
-            
-            #layer-types li {
-              margin: 0 10px 5px 0;
-              background-color: #e0e0e0;
-              padding: 2px 5px;
-              border-radius: 3px;
-            }
-            
-            #search-container {
-              margin-top: 10px;
-              position: relative;
-            }
-            
-            #search {
-              width: 100%;
-              padding: 5px;
-            }
-            
-            #search-results {
-              position: absolute;
-              right: 5px;
-              top: 50%;
-              transform: translateY(-50%);
-              font-size: 0.8em;
-              color: #666;
-            }
-            
-            #tree {
-              padding: 20px;
-            }
-            
-            .tree li {
-              display: block;
-              position: relative;
-              padding-left: calc(2 * var(--spacing) - var(--radius) - 2px);
-            }
-            
-            .tree ul {
-              margin-left: calc(var(--radius) - var(--spacing));
-              padding-left: 0;
-            }
-            
-            .tree ul li {
-              border-left: 2px solid var(--border-color);
-            }
-            
-            .tree ul li:last-child {
-              border-color: transparent;
-            }
-            
-            .tree ul li::before {
-              content: "";
-              display: block;
-              position: absolute;
-              top: calc(var(--spacing) / -2);
-              left: -2px;
-              width: calc(var(--spacing) + 2px);
-              height: calc(var(--spacing) + 1px);
-              border: solid var(--border-color);
-              border-width: 0 0 2px 2px;
-            }
-            
-            .tree .node {
-              display: inline-block;
-              cursor: pointer;
-              background-color: #fff;
-              border: 2px solid var(--border-color);
-              border-radius: var(--radius);
-              padding: 0.5rem 1rem;
-              margin: 0.5rem 0;
-              transition: all 0.3s;
-            }
-            
-            .tree .node:hover {
-              background-color: var(--bg-color);
-              transform: translateY(-2px);
-              box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            }
-            
-            .tree .node.selected {
-              background-color: #e6f3ff;
-              border-color: var(--primary-color);
-            }
-            
-            .caret {
-              cursor: pointer;
-              user-select: none;
-              display: inline-block;
-              width: 0;
-              height: 0;
-              margin-right: 6px;
-              vertical-align: middle;
-              border: 6px solid transparent;
-              border-left-color: var(--text-color);
-              transition: transform 0.2s;
-            }
-            
-            .caret-down {
-              transform: rotate(90deg);
-            }
-            
-            .nested {
-              display: none;
-            }
-            
-            .active {
-              display: block;
-            }
-            
-            #layer-info {
-              position: fixed;
-              bottom: 20px;
-              right: 20px;
-              background-color: #fff;
-              border-radius: var(--radius);
-              padding: 15px;
-              box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-              display: none;
-              max-width: 300px;
-              overflow: auto;
-              max-height: 80vh;
-              z-index: 1001;
-            }
-            
-            .highlight {
-              background-color: yellow;
-            }
-            
-            .current-highlight {
-              background-color: orange;
-            }
-            
-            .anomaly {
-              background-color: #ffe6e6;
-            }
-            
-            #histogram-container {
-              margin-top: 20px;
-            }
-            
-            .histogram-bar {
-              display: inline-block;
-              width: 2px;
-              background-color: var(--primary-color);
-              vertical-align: bottom;
-              margin-right: 1px;
-            }
-            
-            #anomaly-info {
-              color: red;
-              font-weight: bold;
-            }
-        </style>
-        """
+        # Prepare model_info for the template
+        model_info = {
+            'total_params': self.model_info['total_params'],
+            'memory_usage': self.model_info['memory_usage'],
+            'estimated_flops': self.model_info['estimated_flops']
+        }
 
-        # HTML content with embedded CSS and JavaScript
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <title>Model Visualizer - {model_name}</title>
-            {embedded_css}
-        </head>
-        <body>
-            <div id="header">
-                <h1>{model_name}</h1>
-                <div id="model-info">
-                    <div id="model-details">
-                        <h3>Model Details</h3>
-                        <p>Total Parameters: {self.model_info['total_params']:,}</p>
-                        <p>Memory Usage: {self.model_info['memory_usage']:.2f} MB</p>
-                        <p>Precisions: {precisions}</p>
-                        <p>Estimated FLOPs: {self.model_info['estimated_flops']:,}</p>
-                    </div>
-                    <div id="layer-types-container">
-                        <h3>Layer Types</h3>
-                        <ul id="layer-types">{layer_type_html}</ul>
-                    </div>
-                </div>
-                <div id="search-container">
-                    <input type="text" id="search" placeholder="Search for layers...">
-                    <span id="search-results"></span>
-                </div>
-            </div>
-            <div id="tree"><ul class="tree">{tree_html}</ul></div>
-            <div id="layer-info"></div>
-            <script>
-                document.addEventListener('DOMContentLoaded', () => {{
-                    const header = document.getElementById('header');
-                    const tree = document.getElementById('tree');
-                    const nodes = document.querySelectorAll('.node');
-                    const layerInfo = document.getElementById('layer-info');
-                    const searchInput = document.getElementById('search');
-                    const searchResults = document.getElementById('search-results');
-                    const tensorStats = {tensor_stats_json};
-                    const anomalies = {anomalies_json};
-
-                    // Function to generate SVG for tensor shapes
-                    function generateShapeSVG(shape) {{
-                        if (!shape) {{
-                            return '<p>No shape information available.</p>';
-                        }}
-                        // Match shapes in the format "N × C × H × W"
-                        const torchMatch = shape.match(/(\\d+)\\s*×\\s*(\\d+)\\s*×\\s*(\\d+)\\s*×\\s*(\\d+)/);
-                        if (torchMatch) {{
-                            const [_, n, c, h, w] = torchMatch;
-                            return `
-                                <svg width="100" height="100" viewBox="0 0 100 100">
-                                    <rect x="10" y="10" width="80" height="80" fill="#f0f0f0" stroke="#333"/>
-                                    <text x="50" y="30" text-anchor="middle" font-size="12">N: ${{n}}</text>
-                                    <text x="50" y="50" text-anchor="middle" font-size="12">C: ${{c}}</text>
-                                    <text x="50" y="70" text-anchor="middle" font-size="12">H×W: ${{h}}×${{w}}</text>
-                                </svg>
-                            `;
-                        }}
-
-                        // Match general shapes with any number of dimensions
-                        const generalMatch = shape.match(/(\\d+(?:\\s*×\\s*\\d+)*)/);
-                        if (generalMatch) {{
-                            const dims = generalMatch[1].split('×').map(d => d.trim());
-                            const dimsText = dims.join(' × ');
-                            return `
-                                <svg width="200" height="50" viewBox="0 0 200 50">
-                                    <rect x="5" y="5" width="190" height="40" fill="#f0f0f0" stroke="#333"/>
-                                    <text x="100" y="30" text-anchor="middle" font-size="14">${{dimsText}}</text>
-                                </svg>
-                            `;
-                        }}
-
-                        // If shape does not match expected formats
-                        return '<p>No shape information available.</p>';
-                    }}
-
-                    // Function to generate histogram HTML
-                    function generateHistogram(histogramData) {{
-                        if (!histogramData) {{
-                            return '<p>No histogram available.</p>';
-                        }}
-                        const [counts, bins] = histogramData;
-                        const maxCount = Math.max(...counts);
-                        const histogramHTML = counts.map(count => {{
-                            const height = (count / maxCount) * 100;
-                            return `<div class="histogram-bar" style="height: ${{height}}px;"></div>`;
-                        }}).join('');
-                        return `<div style="display: flex; align-items: flex-end; height: 100px;">${{histogramHTML}}</div>`;
-                    }}
-
-                    // Set initial top margin for tree
-                    tree.style.marginTop = `${{header.offsetHeight + 20}}px`;
-
-                    // Update tree margin on window resize
-                    window.addEventListener('resize', () => {{
-                        tree.style.marginTop = `${{header.offsetHeight + 20}}px`;
-                    }});
-
-                    // Node click event
-                    tree.addEventListener('click', function(e) {{
-                        if (e.target.classList.contains('caret') || e.target.classList.contains('node')) {{
-                            const nodeElement = e.target.classList.contains('caret') ? e.target.parentElement : e.target;
-                            const nestedUl = nodeElement.nextElementSibling;
-
-                            // Toggle expand/collapse
-                            if (nestedUl) {{
-                                nestedUl.classList.toggle('active');
-                                const caret = nodeElement.querySelector('.caret');
-                                if (caret) caret.classList.toggle('caret-down');
-                            }}
-
-                            // Show node info
-                            nodes.forEach(n => n.classList.remove('selected'));
-                            nodeElement.classList.add('selected');
-                            const params = nodeElement.dataset.params;
-                            const shape = nodeElement.dataset.shape;
-                            const name = nodeElement.dataset.name;
-                            const key = nodeElement.dataset.fullname;
-                            let infoHTML = `<h3>${{name}}</h3><p>Parameters: ${{params}}</p>`;
-                            if (shape) {{
-                                // Use SVG for shape representation
-                                const shapeSVG = generateShapeSVG(shape);
-                                infoHTML += `<div class="shape-svg">${{shapeSVG}}</div>`;
-                            }}
-                            if (tensorStats[key]) {{
-                                const stats = tensorStats[key];
-                                if (stats.mean !== null) {{
-                                    infoHTML += `<h4>Statistics:</h4><p>Mean: ${{stats.mean.toFixed(4)}}, Std: ${{stats.std.toFixed(4)}}, Min: ${{stats.min.toFixed(4)}}, Max: ${{stats.max.toFixed(4)}}, Zeros: ${{stats.num_zeros}}</p>`;
-                                    if (stats.histogram) {{
-                                        infoHTML += `<div id="histogram-container">${{generateHistogram(stats.histogram)}}</div>`;
-                                    }}
-                                }} else {{
-                                    infoHTML += `<p>Statistics: Unable to calculate.</p>`;
-                                }}
-                            }}
-                            if (anomalies[key]) {{
-                                infoHTML += `<div id="anomaly-info">Anomaly Detected: ${{anomalies[key]}}</div>`;
-                            }}
-                            layerInfo.innerHTML = infoHTML;
-                            layerInfo.style.display = 'block';
-
-                            e.stopPropagation();
-                        }}
-                    }});
-
-                    document.addEventListener('click', (e) => {{
-                        if (!e.target.closest('.node') && !e.target.closest('#layer-info')) {{
-                            layerInfo.style.display = 'none';
-                            nodes.forEach(n => n.classList.remove('selected'));
-                        }}
-                    }});
-
-                    // Search functionality
-                    searchInput.addEventListener('input', function() {{
-                        const searchTerm = this.value.toLowerCase();
-                        let matchCount = 0;
-                        let firstMatch = null;
-
-                        nodes.forEach(node => {{
-                            node.classList.remove('highlight', 'current-highlight');
-                            const nodeText = node.textContent.toLowerCase();
-
-                            if (nodeText.includes(searchTerm)) {{
-                                matchCount++;
-                                node.classList.add('highlight');
-                                if (!firstMatch) {{
-                                    firstMatch = node;
-                                    node.classList.add('current-highlight');
-                                }}
-                                expandParents(node);
-                            }} else {{
-                                node.classList.remove('highlight', 'current-highlight');
-                            }}
-                        }});
-
-                        searchResults.textContent = searchTerm ? `${{matchCount}} result${{matchCount !== 1 ? 's' : ''}} found` : '';
-
-                        if (firstMatch) {{
-                            firstMatch.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                        }}
-                    }});
-
-                    function expandParents(node) {{
-                        let parent = node.parentElement.parentElement;
-                        while (parent && parent.id !== 'tree') {{
-                            if (parent.tagName.toLowerCase() === 'ul') {{
-                                parent.classList.add('active');
-                                const parentNode = parent.previousElementSibling;
-                                if (parentNode && parentNode.classList.contains('node')) {{
-                                    const caret = parentNode.querySelector('.caret');
-                                    if (caret) caret.classList.add('caret-down');
-                                }}
-                            }}
-                            parent = parent.parentElement;
-                        }}
-                    }}
-                }});
-            </script>
-        </body>
-        </html>
-        """
-
+        # Render the template with context
+        template = self.template_env.get_template("index.html")
+        html_content = template.render(
+            model_name=model_name,
+            tree_html=tree_html,
+            layer_type_html=layer_type_html,
+            tensor_stats_json=tensor_stats_json,
+            anomalies_json=anomalies_json,
+            model_info=model_info,
+            precisions=precisions
+        )
         return html_content
 
 
     def serve_html(self) -> None:
-        handler_class = self.create_handler()
+        class DebugHTTPServer(socketserver.TCPServer):
+            def __init__(self, *args, **kwargs):
+                self.debug = kwargs.pop('debug', False)
+                self.html_content = kwargs.pop('html_content', '')
+                self.tensor_stats = kwargs.pop('tensor_stats', {})
+                self.anomalies = kwargs.pop('anomalies', {})
+                super().__init__(*args, **kwargs)
 
-        with socketserver.TCPServer(("", self.port), handler_class) as httpd:
+        with DebugHTTPServer(("", self.port), CustomHandler, debug=self.debug, html_content=self.html_content, tensor_stats=self.tensor_stats, anomalies=self.anomalies) as httpd:
             url = f"http://localhost:{self.port}/"
             self.logger.info(f"Serving visualization at {url}")
             webbrowser.open(url)
@@ -693,26 +320,6 @@ class ModelVisualizer:
             except Exception as e:
                 self.logger.error(f"Error starting the server: {e}")
                 self.logger.info(f"You can manually open the HTML file: {url}")
-
-    def create_handler(self):
-        html_content = self.html_content  # Capture the current HTML content
-
-        class CustomHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path in ('/', '/index.html'):
-                    self.send_response(200)
-                    self.send_header("Content-type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(html_content.encode('utf-8'))
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-                    self.wfile.write(b'404 Not Found')
-
-            def log_message(self, format, *args):
-                return  # Suppress logging to keep the output clean
-
-        return CustomHandler
 
     def generate_visualization(self) -> None:
         try:
@@ -737,6 +344,50 @@ class ModelVisualizer:
                 traceback.print_exc()
             sys.exit(1)
 
+class CustomHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(self.server.html_content.encode('utf-8'))
+        elif self.path.startswith('/static/'):
+            # Serve static files
+            static_dir = resource_filename('tensorkiko', 'static')
+            file_path = os.path.join(static_dir, self.path[8:])  # Remove '/static/' prefix
+            if os.path.exists(file_path) and os.path.isfile(file_path):
+                with open(file_path, 'rb') as file:
+                    content = file.read()
+                self.send_response(200)
+                if self.path.endswith('.css'):
+                    self.send_header("Content-type", "text/css")
+                elif self.path.endswith('.js'):
+                    self.send_header("Content-type", "application/javascript")
+                else:
+                    self.send_header("Content-type", self.guess_type(file_path))
+                self.end_headers()
+                self.wfile.write(content)
+            else:
+                self.send_error(404, f"File not found: {self.path}")
+        elif self.path == '/api/data':
+            # API endpoint to serve data
+            data = {
+                'tensor_stats': self.server.tensor_stats,
+                'anomalies': self.server.anomalies
+            }
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode('utf-8'))
+        else:
+            self.send_error(404, f"File not found: {self.path}")
+
+    def log_message(self, format, *args):
+        if self.server.debug:
+            super().log_message(format, *args)
 def main():
     parser = argparse.ArgumentParser(description="Visualize and analyze safetensors models.")
     parser.add_argument("file_paths", nargs='+', help="Paths to the model files (.safetensors or .ckpt)")

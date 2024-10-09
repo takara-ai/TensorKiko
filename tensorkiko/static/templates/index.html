@@ -1,0 +1,50 @@
+<!-- static/templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Model Visualizer - {{ model_name }}</title>
+    <link rel="stylesheet" href="/static/css/styles.css" />
+  </head>
+  <body>
+    <div id="header">
+      <h1>{{ model_name }}</h1>
+      <div id="model-info">
+        <div id="model-details">
+          <h3>Model Details</h3>
+          <p>
+            Total Parameters: {{ "{:,}".format(model_info.total_params | int) }}
+          </p>
+          <p>Memory Usage: {{ model_info.memory_usage | round(2) }} MB</p>
+          <p>Precisions: {{ precisions }}</p>
+          <p>
+            Estimated FLOPs: {{ "{:,}".format(model_info.estimated_flops | int)
+            }}
+          </p>
+        </div>
+        <div id="layer-types-container">
+          <h3>Layer Types</h3>
+          <ul id="layer-types">
+            {{ layer_type_html | safe }}
+          </ul>
+        </div>
+      </div>
+      <div id="search-container">
+        <input type="text" id="search" placeholder="Search for layers..." />
+        <span id="search-results"></span>
+      </div>
+    </div>
+    <div id="tree">
+      <ul class="tree">
+        {{ tree_html | safe }}
+      </ul>
+    </div>
+    <div id="layer-info"></div>
+    <script>
+      // Inject dynamic data from backend
+      window.tensorStats = {{ tensor_stats_json | safe }};
+      window.anomalies = {{ anomalies_json | safe }};
+    </script>
+    <script src="/static/js/scripts.js"></script>
+  </body>
+</html>
