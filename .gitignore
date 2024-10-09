@@ -167,3 +167,5 @@ checkpoint_investigate.ipynb
 # Model Files
 *.safetensors
 *.ckpt
+
+/tensor
