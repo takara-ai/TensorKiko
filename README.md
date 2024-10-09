@@ -4,13 +4,23 @@ A fast and intuitive tool for visualizing and analyzing model structures from sa
 
 ## Installation
 
-### Using pip
+### Requirements
+
+- Python 3.11 or higher
+
+### Installation Methods
+
+#### Using pip
+
+To install TensorKiko with pip, run the following command:
 
 ```
 pip install tensorkiko
 ```
 
-### Using Homebrew
+#### Using Homebrew
+
+To install TensorKiko using Homebrew, use the following commands:
 
 ```
 brew tap takara-ai/tensorkiko https://github.com/takara-ai/TensorKiko
@@ -19,13 +29,15 @@ brew install tensorkiko
 
 ## Usage
 
-After installation, you can use TensorKiko from the command line:
+After installation, you can use TensorKiko from the command line to visualize your model:
 
 ```
 tensorkiko path/to/your/model.safetensors
 ```
 
-For more options, use:
+TensorKiko can also attempt to convert `.ckpt` files to `.safetensors`. However, conversion will only succeed if the `.ckpt` file is in a standard model format without unique code elements such as SQLite.
+
+For more options, use the help command:
 
 ```
 tensorkiko --help
@@ -40,7 +52,7 @@ tensorkiko --help
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+We welcome contributions! If you'd like to contribute, please feel free to submit a Pull Request.
 
 ## License
 
