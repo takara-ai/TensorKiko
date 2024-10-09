@@ -153,19 +153,41 @@ class ModelVisualizer:
 
     def calculate_tensor_stats(self, tensor_data: np.ndarray) -> Dict[str, Any]:
         stats = {
-            'mean': float(np.mean(tensor_data)),
-            'std': float(np.std(tensor_data)),
+            'mean': None,
+            'std': None,
             'min': float(np.min(tensor_data)),
             'max': float(np.max(tensor_data)),
             'num_zeros': int(np.sum(tensor_data == 0)),
             'num_elements': tensor_data.size,
-            'histogram': None  # Histograms are optional for large tensors
+            'histogram': None
         }
+
+        # Safely calculate mean and std
+        with np.errstate(all='raise'):
+            try:
+                stats['mean'] = float(np.mean(tensor_data))
+                stats['std'] = float(np.std(tensor_data))
+            except FloatingPointError:
+                # If overflow occurs, try with float64
+                tensor_data_64 = tensor_data.astype(np.float64)
+                try:
+                    stats['mean'] = float(np.mean(tensor_data_64))
+                    stats['std'] = float(np.std(tensor_data_64))
+                except FloatingPointError:
+                    # If still overflowing, use robust statistics
+                    stats['mean'] = float(np.median(tensor_data_64))
+                    stats['std'] = float(np.median(np.abs(tensor_data_64 - stats['mean'])))
+
         # Only compute histogram if tensor is small to avoid performance issues
         if tensor_data.size <= 1e6:
-            hist_counts, bin_edges = np.histogram(tensor_data, bins=50)
-            stats['histogram'] = [hist_counts.tolist(), bin_edges.tolist()]
+            try:
+                hist_counts, bin_edges = np.histogram(tensor_data, bins=50)
+                stats['histogram'] = [hist_counts.tolist(), bin_edges.tolist()]
+            except Exception as e:
+                self.logger.warning(f"Could not compute histogram: {e}")
+
         return stats
+
 
     def detect_anomalies(self, tensor_data: np.ndarray, stats: Dict[str, Any]) -> Optional[str]:
         if np.isnan(tensor_data).any() or np.isinf(tensor_data).any():
