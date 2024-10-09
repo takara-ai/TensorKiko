@@ -22,6 +22,7 @@ from urllib.parse import urlparse, parse_qs
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pkg_resources import resource_filename
 from tensorkiko.convert_ckpt_st import convert_ckpt_to_safetensors
+from tensorkiko.tensor_processing import process_tensors
 
 @dataclass
 class ModelVisualizer:
@@ -112,71 +113,17 @@ class ModelVisualizer:
             self.update_model_info(state_dict)
 
             # Process tensors
-            self.process_tensors(state_dict)
+            process_tensors(self,state_dict)
 
     def update_model_info(self, state_dict: Dict[str, torch.Tensor]) -> None:
         self.model_info['total_params'] += sum(t.numel() for t in state_dict.values())
-        self.model_info['memory_usage'] += sum(t.numel() * t.element_size() for t in state_dict.values())
+        self.model_info['memory_usage'] += round(sum(t.numel() * t.element_size() for t in state_dict.values()) / (1024 * 1024), 2)
         self.model_info['precisions'].update(str(t.dtype) for t in state_dict.values())
 
     def safe_to_numpy(self, tensor):
         if tensor.dtype == torch.bfloat16:
             return tensor.to(torch.float32).cpu().numpy()
         return tensor.cpu().numpy()
-
-    def process_tensors(self, state_dict: Dict[str, torch.Tensor]) -> None:
-        def process_tensor(key_tensor):
-            key, tensor = key_tensor
-            if self.include_layers and not re.search(self.include_layers, key):
-                return
-            if self.exclude_layers and re.search(self.exclude_layers, key):
-                return
-
-            parts = key.split('.')
-            layer_type = parts[-2] if parts[-1] in {'weight', 'bias', 'running_mean', 'running_var'} else parts[-1]
-            self.layer_types[layer_type] += 1
-
-            # Enhanced FLOPs estimation
-            if 'weight' in key:
-                if tensor.dim() == 4:
-                    n, c, h, w = tensor.shape
-                    input_size = 224  # Placeholder; consider making this configurable
-                    self.model_info['estimated_flops'] += 2 * n * c * h * w * input_size * input_size
-                elif tensor.dim() == 2:
-                    m, n = tensor.shape
-                    self.model_info['estimated_flops'] += 2 * m * n
-
-            # Calculate tensor statistics
-            try:
-                tensor_data = self.safe_to_numpy(tensor)
-                stats = self.calculate_tensor_stats(tensor_data)
-                self.tensor_stats[key] = stats
-
-                # Advanced anomaly detection
-                anomaly = self.detect_anomalies(tensor_data, stats)
-                if anomaly:
-                    self.anomalies[key] = anomaly
-            except Exception as e:
-                self.logger.error(f"Error processing tensor {key}: {e}")
-                self.anomalies[key] = f"Error during processing: {e}"
-                self.tensor_stats[key] = {
-                    'mean': None,
-                    'std': None,
-                    'min': None,
-                    'max': None,
-                    'num_zeros': None,
-                    'num_elements': tensor.numel(),
-                    'histogram': None
-                }
-
-        # Use ThreadPoolExecutor with progress bar
-        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-            key_tensor_pairs = list(state_dict.items())
-            futures = {executor.submit(process_tensor, kt): kt for kt in key_tensor_pairs}
-            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing tensors"):
-                future.result()
-
-        self.model_info['memory_usage'] /= (1024 * 1024)  # Convert to MB
 
     def calculate_tensor_stats(self, tensor_data: np.ndarray) -> Dict[str, Any]:
         stats = {

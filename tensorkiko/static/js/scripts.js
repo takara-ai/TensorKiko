@@ -64,20 +64,50 @@ document.addEventListener("DOMContentLoaded", () => {
     return "<p>No shape information available.</p>";
   }
 
-  // Function to generate histogram HTML
   function generateHistogram(histogramData) {
     if (!histogramData) {
-      return "<p>No histogram available.</p>";
+      return "<p>No histogram data available.</p>";
     }
+
+    // Check if histogramData is a string (error message)
+    if (typeof histogramData === "string") {
+      return `<p>${histogramData}</p>`;
+    }
+
+    // Ensure histogramData is an array with two elements
+    if (!Array.isArray(histogramData) || histogramData.length !== 2) {
+      return "<p>Invalid histogram data format.</p>";
+    }
+
     const [counts, bins] = histogramData;
+
+    // Ensure counts is an array
+    if (!Array.isArray(counts)) {
+      return "<p>Invalid histogram counts data.</p>";
+    }
+
     const maxCount = Math.max(...counts);
+
+    // Handle case where all counts are zero
+    if (maxCount === 0) {
+      return "<p>All values in the histogram are zero.</p>";
+    }
+
     const histogramHTML = counts
       .map((count) => {
         const height = (count / maxCount) * 100;
-        return `<div class="histogram-bar" style="height: ${height}px;"></div>`;
+        return `<div class="histogram-bar" style="height: ${height}px; flex-grow: 1;"></div>`;
       })
       .join("");
-    return `<div style="display: flex; align-items: flex-end; height: 100px;">${histogramHTML}</div>`;
+
+    return `
+        <div style="display: flex; align-items: flex-end; height: 100px; width: 100%;">
+            ${histogramHTML}
+        </div>
+        <p>Min: ${bins[0].toFixed(4)}, Max: ${bins[bins.length - 1].toFixed(
+      4
+    )}</p>
+    `;
   }
 
   // Set initial top margin for tree
