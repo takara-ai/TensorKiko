@@ -150,6 +150,7 @@ class ModelVisualizer:
                     }
 
         self.model_info['memory_usage'] /= (1024 * 1024)  # Convert to MB
+    
 
     def calculate_tensor_stats(self, tensor_data: np.ndarray) -> Dict[str, Any]:
         stats = {
