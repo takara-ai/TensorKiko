@@ -17,6 +17,7 @@ import json
 from tqdm import tqdm  # For progress bars
 import re
 import threading
+from convert_ckpt_st import convert_ckpt_to_safetensors
 
 @dataclass
 class ModelVisualizer:
@@ -96,6 +97,11 @@ class ModelVisualizer:
         self.model_info['memory_usage'] += sum(t.numel() * t.element_size() for t in state_dict.values())
         self.model_info['precisions'].update(str(t.dtype) for t in state_dict.values())
 
+    def safe_to_numpy(self, tensor):
+        if tensor.dtype == torch.bfloat16:
+            return tensor.to(torch.float32).cpu().numpy()
+        return tensor.cpu().numpy()
+
     def process_tensors(self, state_dict: Dict[str, torch.Tensor]) -> None:
         def process_tensor(key_tensor):
             key, tensor = key_tensor
@@ -119,38 +125,36 @@ class ModelVisualizer:
                     self.model_info['estimated_flops'] += 2 * m * n
 
             # Calculate tensor statistics
-            tensor_data = tensor.cpu().numpy()
-            stats = self.calculate_tensor_stats(tensor_data)
-            self.tensor_stats[key] = stats
+            try:
+                tensor_data = self.safe_to_numpy(tensor)
+                stats = self.calculate_tensor_stats(tensor_data)
+                self.tensor_stats[key] = stats
 
-            # Advanced anomaly detection
-            anomaly = self.detect_anomalies(tensor_data, stats)
-            if anomaly:
-                self.anomalies[key] = anomaly
+                # Advanced anomaly detection
+                anomaly = self.detect_anomalies(tensor_data, stats)
+                if anomaly:
+                    self.anomalies[key] = anomaly
+            except Exception as e:
+                self.logger.error(f"Error processing tensor {key}: {e}")
+                self.anomalies[key] = f"Error during processing: {e}"
+                self.tensor_stats[key] = {
+                    'mean': None,
+                    'std': None,
+                    'min': None,
+                    'max': None,
+                    'num_zeros': None,
+                    'num_elements': tensor.numel(),
+                    'histogram': None
+                }
 
         # Use ThreadPoolExecutor with progress bar
         with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
             key_tensor_pairs = list(state_dict.items())
             futures = {executor.submit(process_tensor, kt): kt for kt in key_tensor_pairs}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Processing tensors"):
-                try:
-                    future.result()
-                except Exception as e:
-                    kt = futures[future]
-                    self.logger.error(f"Error processing tensor {kt[0]}: {e}")
-                    self.anomalies[kt[0]] = f"Error during processing: {e}"
-                    self.tensor_stats[kt[0]] = {
-                        'mean': None,
-                        'std': None,
-                        'min': None,
-                        'max': None,
-                        'num_zeros': None,
-                        'num_elements': kt[1].numel(),
-                        'histogram': None
-                    }
+                future.result()
 
         self.model_info['memory_usage'] /= (1024 * 1024)  # Convert to MB
-    
 
     def calculate_tensor_stats(self, tensor_data: np.ndarray) -> Dict[str, Any]:
         stats = {
@@ -164,18 +168,18 @@ class ModelVisualizer:
         }
 
         # Safely calculate mean and std
-        with np.errstate(all='raise'):
+        with np.errstate(all='ignore'):
             try:
                 stats['mean'] = float(np.mean(tensor_data))
                 stats['std'] = float(np.std(tensor_data))
-            except FloatingPointError:
-                # If overflow occurs, try with float64
+            except Exception:
+                # If calculation fails, try with float64
                 tensor_data_64 = tensor_data.astype(np.float64)
                 try:
                     stats['mean'] = float(np.mean(tensor_data_64))
                     stats['std'] = float(np.std(tensor_data_64))
-                except FloatingPointError:
-                    # If still overflowing, use robust statistics
+                except Exception:
+                    # If still failing, use robust statistics
                     stats['mean'] = float(np.median(tensor_data_64))
                     stats['std'] = float(np.median(np.abs(tensor_data_64 - stats['mean'])))
 
@@ -735,17 +739,44 @@ class ModelVisualizer:
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize and analyze safetensors models.")
-    parser.add_argument("file_paths", nargs='+', help="Paths to the safetensors files")
+    parser.add_argument("file_paths", nargs='+', help="Paths to the model files (.safetensors or .ckpt)")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--no-tree", action="store_true", help="Disable tree visualization")
     parser.add_argument("--port", type=int, default=8000, help="HTTP server port (default: 8000)")
-    parser.add_argument("--output-dir", default="", help="Directory to save the HTML")
+    parser.add_argument("--output-dir", default="", help="Directory to save the output files")
     parser.add_argument("--include-layers", help="Regex to include specific layers")
     parser.add_argument("--exclude-layers", help="Regex to exclude specific layers")
+    parser.add_argument("--convert", action="store_true", help="Convert .ckpt files to .safetensors")
     args = parser.parse_args()
 
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(level=log_level, format='[%(levelname)s] %(message)s')
+    logger = logging.getLogger("TensorKiko")
+
+    safetensors_files = []
+
+    for file_path in args.file_paths:
+        if file_path.lower().endswith('.ckpt'):
+            if args.convert or input(f"Convert {file_path} to safetensors? (y/n): ").lower() == 'y':
+                output_path = os.path.join(args.output_dir, os.path.splitext(os.path.basename(file_path))[0] + ".safetensors") if args.output_dir else None
+                converted_path = convert_ckpt_to_safetensors(file_path, output_path)
+                if converted_path:
+                    safetensors_files.append(converted_path)
+                else:
+                    logger.error(f"Failed to convert {file_path}. Skipping this file.")
+            else:
+                logger.warning(f"Skipping {file_path} as it's not in safetensors format.")
+        elif file_path.lower().endswith('.safetensors'):
+            safetensors_files.append(file_path)
+        else:
+            logger.warning(f"Unsupported file format: {file_path}")
+
+    if not safetensors_files:
+        logger.error("No valid safetensors files to process.")
+        sys.exit(1)
+
     visualizer = ModelVisualizer(
-        file_paths=args.file_paths,
+        file_paths=safetensors_files,
         debug=args.debug,
         no_tree=args.no_tree,
         port=args.port,
