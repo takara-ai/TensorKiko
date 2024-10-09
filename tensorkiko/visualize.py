@@ -16,6 +16,7 @@ import numpy as np
 import json
 from tqdm import tqdm  # For progress bars
 import re
+import threading
 
 @dataclass
 class ModelVisualizer:
@@ -38,6 +39,7 @@ class ModelVisualizer:
     })
     tensor_stats: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     anomalies: Dict[str, str] = field(default_factory=dict)
+    html_content: str = ''  # Store the generated HTML content
 
     def __post_init__(self):
         log_level = logging.DEBUG if self.debug else logging.INFO
@@ -229,15 +231,226 @@ class ModelVisualizer:
         # Aggregate precisions
         precisions = ', '.join(self.model_info['precisions'])
 
-        # HTML content with linked CSS and embedded JavaScript
+        # Embed your custom CSS directly into the HTML
+        embedded_css = """
+        <style>
+            :root {
+              --spacing: 1.5rem;
+              --radius: 10px;
+              --primary-color: #3498db;
+              --bg-color: #f0f0f0;
+              --text-color: #333;
+              --border-color: #ddd;
+            }
+            
+            body {
+              font-family: Arial, sans-serif;
+              margin: 0;
+              padding: 0;
+              background-color: var(--bg-color);
+              color: var(--text-color);
+            }
+            
+            #header {
+              position: fixed;
+              top: 0;
+              left: 0;
+              right: 0;
+              background-color: rgba(255, 255, 255, 0.95);
+              box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+              padding: 10px 20px;
+              z-index: 1000;
+              display: flex;
+              flex-direction: column;
+            }
+            
+            #model-info {
+              display: flex;
+              flex-wrap: wrap;
+              justify-content: space-between;
+              align-items: flex-start;
+            }
+            
+            #model-details,
+            #layer-types-container {
+              flex: 1;
+              min-width: 200px;
+              margin-right: 20px;
+            }
+            
+            #layer-types {
+              font-size: 0.9em;
+              max-height: 150px;
+              overflow-y: auto;
+              list-style-type: none;
+              padding: 0;
+              margin: 0;
+              display: flex;
+              flex-wrap: wrap;
+            }
+            
+            #layer-types li {
+              margin: 0 10px 5px 0;
+              background-color: #e0e0e0;
+              padding: 2px 5px;
+              border-radius: 3px;
+            }
+            
+            #search-container {
+              margin-top: 10px;
+              position: relative;
+            }
+            
+            #search {
+              width: 100%;
+              padding: 5px;
+            }
+            
+            #search-results {
+              position: absolute;
+              right: 5px;
+              top: 50%;
+              transform: translateY(-50%);
+              font-size: 0.8em;
+              color: #666;
+            }
+            
+            #tree {
+              padding: 20px;
+            }
+            
+            .tree li {
+              display: block;
+              position: relative;
+              padding-left: calc(2 * var(--spacing) - var(--radius) - 2px);
+            }
+            
+            .tree ul {
+              margin-left: calc(var(--radius) - var(--spacing));
+              padding-left: 0;
+            }
+            
+            .tree ul li {
+              border-left: 2px solid var(--border-color);
+            }
+            
+            .tree ul li:last-child {
+              border-color: transparent;
+            }
+            
+            .tree ul li::before {
+              content: "";
+              display: block;
+              position: absolute;
+              top: calc(var(--spacing) / -2);
+              left: -2px;
+              width: calc(var(--spacing) + 2px);
+              height: calc(var(--spacing) + 1px);
+              border: solid var(--border-color);
+              border-width: 0 0 2px 2px;
+            }
+            
+            .tree .node {
+              display: inline-block;
+              cursor: pointer;
+              background-color: #fff;
+              border: 2px solid var(--border-color);
+              border-radius: var(--radius);
+              padding: 0.5rem 1rem;
+              margin: 0.5rem 0;
+              transition: all 0.3s;
+            }
+            
+            .tree .node:hover {
+              background-color: var(--bg-color);
+              transform: translateY(-2px);
+              box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
+            
+            .tree .node.selected {
+              background-color: #e6f3ff;
+              border-color: var(--primary-color);
+            }
+            
+            .caret {
+              cursor: pointer;
+              user-select: none;
+              display: inline-block;
+              width: 0;
+              height: 0;
+              margin-right: 6px;
+              vertical-align: middle;
+              border: 6px solid transparent;
+              border-left-color: var(--text-color);
+              transition: transform 0.2s;
+            }
+            
+            .caret-down {
+              transform: rotate(90deg);
+            }
+            
+            .nested {
+              display: none;
+            }
+            
+            .active {
+              display: block;
+            }
+            
+            #layer-info {
+              position: fixed;
+              bottom: 20px;
+              right: 20px;
+              background-color: #fff;
+              border-radius: var(--radius);
+              padding: 15px;
+              box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+              display: none;
+              max-width: 300px;
+              overflow: auto;
+              max-height: 80vh;
+              z-index: 1001;
+            }
+            
+            .highlight {
+              background-color: yellow;
+            }
+            
+            .current-highlight {
+              background-color: orange;
+            }
+            
+            .anomaly {
+              background-color: #ffe6e6;
+            }
+            
+            #histogram-container {
+              margin-top: 20px;
+            }
+            
+            .histogram-bar {
+              display: inline-block;
+              width: 2px;
+              background-color: var(--primary-color);
+              vertical-align: bottom;
+              margin-right: 1px;
+            }
+            
+            #anomaly-info {
+              color: red;
+              font-weight: bold;
+            }
+        </style>
+        """
+
+        # HTML content with embedded CSS and JavaScript
         html_content = f"""
         <!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
             <title>Model Visualizer - {model_name}</title>
-            <!-- Link to external CSS -->
-            <link rel="stylesheet" type="text/css" href="styles.css">
+            {embedded_css}
         </head>
         <body>
             <div id="header">
@@ -438,40 +651,41 @@ class ModelVisualizer:
         return html_content
 
 
-    def save_html(self, html_content: str, model_name: str) -> str:
-        output_dir = self.output_dir or os.path.dirname(os.path.abspath(self.file_paths[0]))
-        os.makedirs(output_dir, exist_ok=True)
-        base_name = os.path.splitext(os.path.basename(model_name))[0]
-        html_file = os.path.join(output_dir, f"{base_name}_visualization.html")
-        
-        # Path to the CSS file
-        css_file = os.path.join(output_dir, "styles.css")
-        
-        # Write the HTML file
-        with open(html_file, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        self.logger.info(f"HTML visualization generated: {html_file}")
-        
+    def serve_html(self) -> None:
+        handler_class = self.create_handler()
 
-        return html_file
-
-
-    def serve_html(self, html_file: str) -> None:
-        output_dir = self.output_dir or os.path.dirname(os.path.abspath(self.file_paths[0]))
-        os.chdir(output_dir)
-        try:
-            handler = http.server.SimpleHTTPRequestHandler
-            with socketserver.TCPServer(("", self.port), handler) as httpd:
-                url = f"http://localhost:{self.port}/{os.path.basename(html_file)}"
-                self.logger.info(f"Serving visualization at {url}")
-                webbrowser.open(url)
-                self.logger.info("Press Ctrl+C to stop the server and exit.")
+        with socketserver.TCPServer(("", self.port), handler_class) as httpd:
+            url = f"http://localhost:{self.port}/"
+            self.logger.info(f"Serving visualization at {url}")
+            webbrowser.open(url)
+            self.logger.info("Press Ctrl+C to stop the server and exit.")
+            try:
                 httpd.serve_forever()
-        except KeyboardInterrupt:
-            self.logger.info("\nServer stopped by user.")
-        except Exception as e:
-            self.logger.error(f"Error starting the server: {e}")
-            self.logger.info(f"You can manually open the HTML file: {html_file}")
+            except KeyboardInterrupt:
+                self.logger.info("\nServer stopped by user.")
+            except Exception as e:
+                self.logger.error(f"Error starting the server: {e}")
+                self.logger.info(f"You can manually open the HTML file: {url}")
+
+    def create_handler(self):
+        html_content = self.html_content  # Capture the current HTML content
+
+        class CustomHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path in ('/', '/index.html'):
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(html_content.encode('utf-8'))
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    self.wfile.write(b'404 Not Found')
+
+            def log_message(self, format, *args):
+                return  # Suppress logging to keep the output clean
+
+        return CustomHandler
 
     def generate_visualization(self) -> None:
         try:
@@ -483,9 +697,12 @@ class ModelVisualizer:
                 else:
                     self.tree_data = {}
                 model_name = os.path.basename(file_path)
-                html_content = self.generate_html(self.tree_data, model_name)
-                html_file = self.save_html(html_content, model_name)
-                self.serve_html(html_file)
+                self.html_content = self.generate_html(self.tree_data, model_name)
+                # Directly serve the HTML from memory
+                server_thread = threading.Thread(target=self.serve_html, daemon=True)
+                server_thread.start()
+                webbrowser.open_new_tab(f"http://localhost:{self.port}/")
+                server_thread.join()
         except Exception as e:
             self.logger.error(f"Error: {e}")
             if self.debug:
