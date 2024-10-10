@@ -14,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pkg_resources import resource_filename
 from tensorkiko.convert_ckpt_st import convert_ckpt_to_safetensors
 from tensorkiko.tensor_processing import process_tensors, get_param_size
+from tensorkiko.model_loader import load_model, is_supported_format
 
 @dataclass
 class ModelVisualizer:
@@ -67,6 +68,26 @@ class ModelVisualizer:
 
             except Exception as e:
                 self.logger.error(f"Failed to load the safetensors file {file_path}: {e}")
+
+    def load_and_process_models(self):
+        for file_path in self.file_paths:
+            state_dict, safetensors_path = load_model(file_path)
+            if state_dict is None:
+                self.logger.error(f"Failed to load model: {file_path}")
+                continue
+
+            self.state_dicts[safetensors_path] = state_dict
+            root = Node("Model", type="root", full_name="Model")
+
+            process_tensors(self, state_dict)
+
+            for key, tensor in state_dict.items():
+                if (self.include_layers and not re.search(self.include_layers, key)) or (self.exclude_layers and re.search(self.exclude_layers, key)):
+                    continue
+                self._build_tree(root, key, tensor)
+
+            self.model_trees[safetensors_path] = root
+            self.update_model_info(state_dict)
 
     def update_model_info(self, state_dict):
         self.model_info['total_params'] = sum(get_param_size(t) for t in state_dict.values())
@@ -189,7 +210,7 @@ class ModelVisualizer:
     def generate_visualization(self):
         try:
             self.logger.info("Loading models...")
-            self.load_and_process_safetensors()
+            self.load_and_process_models()
             for file_path, model_tree in self.model_trees.items():
                 self.tree_data = self.tree_to_dict(model_tree) if not self.no_tree else {}
                 model_name = os.path.basename(file_path)
@@ -214,42 +235,32 @@ class ModelVisualizer:
             sys.exit(1)
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize and analyze safetensors models.")
-    parser.add_argument("file_paths", nargs='+', help="Paths to the model files (.safetensors or .ckpt)")
+    parser = argparse.ArgumentParser(description="Visualize and analyze models in various formats.")
+    parser.add_argument("file_paths", nargs='+', help="Paths to the model files (.safetensors, .pt, .pth, .pb, .h5)")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--no-tree", action="store_true", help="Disable tree visualization")
     parser.add_argument("--port", type=int, default=8000, help="HTTP server port (default: 8000)")
     parser.add_argument("--output-dir", default="", help="Directory to save the output files")
     parser.add_argument("--include-layers", help="Regex to include specific layers")
     parser.add_argument("--exclude-layers", help="Regex to exclude specific layers")
-    parser.add_argument("--convert", action="store_true", help="Convert .ckpt files to .safetensors")
     args = parser.parse_args()
-    logger = logging.getLogger("TensorKiko")
+    
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format='[%(levelname)s] %(message)s')
+    logger = logging.getLogger("TensorKiko")
 
-    safetensors_files = []
+    valid_files = []
     for file_path in args.file_paths:
-        if file_path.lower().endswith('.ckpt'):
-            if args.convert or input(f"Convert {file_path} to safetensors? (y/n): ").lower() == 'y':
-                output_path = os.path.join(args.output_dir, os.path.splitext(os.path.basename(file_path))[0] + ".safetensors") if args.output_dir else None
-                converted_path = convert_ckpt_to_safetensors(file_path, output_path)
-                if converted_path:
-                    safetensors_files.append(converted_path)
-                else:
-                    logger.error(f"Failed to convert {file_path}. Skipping this file.")
-            else:
-                logger.warning(f"Skipping {file_path} as it's not in safetensors format.")
-        elif file_path.lower().endswith('.safetensors'):
-            safetensors_files.append(file_path)
+        if is_supported_format(file_path):
+            valid_files.append(file_path)
         else:
             logger.warning(f"Unsupported file format: {file_path}")
 
-    if not safetensors_files:
-        logger.error("No valid safetensors files to process.")
+    if not valid_files:
+        logger.error("No valid model files to process.")
         sys.exit(1)
 
     visualizer = ModelVisualizer(
-        file_paths=safetensors_files,
+        file_paths=valid_files,
         debug=args.debug,
         no_tree=args.no_tree,
         port=args.port,
@@ -258,6 +269,6 @@ def main():
         exclude_layers=args.exclude_layers
     )
     visualizer.generate_visualization()
-
+    
 if __name__ == "__main__":
     main()
