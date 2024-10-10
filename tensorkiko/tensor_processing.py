@@ -52,10 +52,13 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
         try:
             if num_elements > 1:  # Ensure we have at least 2 elements
                 if min_val != max_val:  # Ensure we have a range of values
-                    # Use numpy for histogram calculation to handle edge cases better
-                    import numpy as np
-                    tensor_np = tensor.numpy().flatten()
-                    hist, bin_edges = np.histogram(tensor_np, bins=100)
+                    # Convert to float32 if tensor is bfloat16
+                    if tensor.dtype == torch.bfloat16:
+                        tensor = tensor.to(torch.float32)
+                    
+                    # Use torch.histogram for histogram calculation
+                    num_bins = 100
+                    hist, bin_edges = torch.histogram(tensor, bins=num_bins)
                     stats['histogram'] = [hist.tolist(), bin_edges.tolist()]
                 else:
                     stats['histogram'] = "All values are identical"
