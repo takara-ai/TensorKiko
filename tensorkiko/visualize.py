@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pkg_resources import resource_filename
 from tensorkiko.convert_ckpt_st import convert_ckpt_to_safetensors
-from tensorkiko.tensor_processing import process_tensors
+from tensorkiko.tensor_processing import process_tensors, get_param_size
 
 @dataclass
 class ModelVisualizer:
@@ -53,15 +53,25 @@ class ModelVisualizer:
                     state_dict = {key: f.get_tensor(key) for key in f.keys()}
                 self.state_dicts[file_path] = state_dict
                 root = Node("Model", type="root", full_name="Model")
+
+                # Use the process_tensors function from the imported script
+                process_tensors(self, state_dict)
+
                 for key, tensor in state_dict.items():
                     if (self.include_layers and not re.search(self.include_layers, key)) or (self.exclude_layers and re.search(self.exclude_layers, key)):
                         continue
                     self._build_tree(root, key, tensor)
+
                 self.model_trees[file_path] = root
                 self.update_model_info(state_dict)
-                process_tensors(self, state_dict)
+
             except Exception as e:
                 self.logger.error(f"Failed to load the safetensors file {file_path}: {e}")
+
+    def update_model_info(self, state_dict):
+        self.model_info['total_params'] = sum(get_param_size(t) for t in state_dict.values())
+        self.model_info['memory_usage'] = round(self.model_info['total_params'] / (1024 * 1024), 2)
+        self.model_info['precisions'].update(str(t.dtype) for t in state_dict.values())
 
     def _build_tree(self, root, key, tensor):
         parent = root
@@ -77,45 +87,8 @@ class ModelVisualizer:
                 child = Node(part, parent=parent, **node_attrs)
             parent = child
 
-    def update_model_info(self, state_dict):
-        self.model_info['total_params'] += sum(t.numel() for t in state_dict.values())
-        self.model_info['memory_usage'] += round(sum(t.numel() * t.element_size() for t in state_dict.values()) / (1024 * 1024), 2)
-        self.model_info['precisions'].update(str(t.dtype) for t in state_dict.values())
-
     def safe_to_numpy(self, tensor):
         return tensor.to(torch.float32).cpu().numpy() if tensor.dtype == torch.bfloat16 else tensor.cpu().numpy()
-
-    def calculate_tensor_stats(self, tensor_data):
-        stats = {'mean': None, 'std': None, 'min': float(np.min(tensor_data)), 'max': float(np.max(tensor_data)),
-                 'num_zeros': int(np.sum(tensor_data == 0)), 'num_elements': tensor_data.size, 'histogram': None}
-        with np.errstate(all='ignore'):
-            try:
-                stats['mean'], stats['std'] = float(np.mean(tensor_data)), float(np.std(tensor_data))
-            except Exception:
-                tensor_data_64 = tensor_data.astype(np.float64)
-                try:
-                    stats['mean'], stats['std'] = float(np.mean(tensor_data_64)), float(np.std(tensor_data_64))
-                except Exception:
-                    stats['mean'], stats['std'] = float(np.median(tensor_data_64)), float(np.median(np.abs(tensor_data_64 - stats['mean'])))
-        if tensor_data.size <= 1e6:
-            try:
-                hist_counts, bin_edges = np.histogram(tensor_data, bins=50)
-                stats['histogram'] = [hist_counts.tolist(), bin_edges.tolist()]
-            except Exception as e:
-                self.logger.warning(f"Could not compute histogram: {e}")
-        return stats
-
-    def detect_anomalies(self, tensor_data, stats):
-        if np.isnan(tensor_data).any() or np.isinf(tensor_data).any():
-            return 'Contains NaN or Inf values'
-        elif stats['std'] == 0:
-            return 'Zero variance'
-        elif stats['std'] != 0:
-            z_scores = np.abs((tensor_data - stats['mean']) / stats['std'])
-            outliers = np.where(z_scores > 6)[0]
-            if len(outliers) > 0:
-                return f'Outliers detected: {len(outliers)} values beyond 6 std dev'
-        return None
 
     def tree_to_dict(self, node):
         return {'name': node.name, 'type': getattr(node, 'type', 'unknown'), 'params': getattr(node, 'params', 0),
