@@ -170,3 +170,4 @@ checkpoint_investigate.ipynb
 
 /tensor
 .DS_Store
+*.pt
