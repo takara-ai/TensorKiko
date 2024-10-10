@@ -51,6 +51,7 @@
       // Inject dynamic data from backend
       window.tensorStats = {{ tensor_stats_json | safe }};
       window.anomalies = {{ anomalies_json | safe }};
+      window.precisions = "{{ precisions | safe }}"
     </script>
     <script src="/static/js/scripts.js"></script>
   </body>
