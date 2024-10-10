@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const searchResults = document.getElementById("search-results");
   const tensorStats = window.tensorStats; // Injected via backend
   const anomalies = window.anomalies; // Injected via backend
+  const precisions = window.precisions;
 
   // Toggle header expansion
   toggleHeader.addEventListener("click", () => {
@@ -118,7 +119,6 @@ document.addEventListener("DOMContentLoaded", () => {
     tree.style.marginTop = `${header.offsetHeight + 20}px`;
   });
 
-  // Node click event
   tree.addEventListener("click", function (e) {
     if (
       e.target.classList.contains("caret") ||
@@ -144,6 +144,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const name = nodeElement.dataset.name;
       const key = nodeElement.dataset.fullname;
       let infoHTML = `<h3>${name}</h3><p>Parameters: ${params}</p>`;
+
+      // Add precision information
+      if (precisions) {
+        infoHTML += `<p>Precisions: ${precisions}</p>`;
+      }
+
       if (shape) {
         // Use SVG for shape representation
         const shapeSVG = generateShapeSVG(shape);
