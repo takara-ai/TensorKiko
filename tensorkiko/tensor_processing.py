@@ -139,23 +139,3 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
         logger.info(f"Estimated total FLOPs: {model_visualizer.model_info['estimated_flops']:,}")
         logger.info(f"Total parameters: {total_params:,} bytes")
         logger.info(f"Number of anomalies detected: {len(model_visualizer.anomalies)}")
-
-def evaluate_model(model, test_loader: DataLoader, device: torch.device):
-    model.eval()
-    total_loss = 0
-    correct = 0
-    total = 0
-
-    with torch.no_grad(), autocast(enabled=True):
-        for inputs, targets in test_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = model(inputs)
-            loss = F.cross_entropy(outputs, targets)
-            total_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
-
-    accuracy = 100. * correct / total
-    avg_loss = total_loss / len(test_loader)
-    return avg_loss, accuracy
