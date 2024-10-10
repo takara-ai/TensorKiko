@@ -46,24 +46,20 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
             'num_elements': num_elements,
             'mean': mean,
             'std': std,
+            'dtype': str(tensor.dtype),
         }
         
         # Compute histogram
         try:
-            if num_elements > 1:  # Ensure we have at least 2 elements
-                if min_val != max_val:  # Ensure we have a range of values
-                    # Convert to float32 if tensor is bfloat16
-                    if tensor.dtype == torch.bfloat16:
-                        tensor = tensor.to(torch.float32)
-                    
-                    # Use torch.histogram for histogram calculation
-                    num_bins = 100
-                    hist, bin_edges = torch.histogram(tensor, bins=num_bins)
-                    stats['histogram'] = [hist.tolist(), bin_edges.tolist()]
-                else:
-                    stats['histogram'] = "All values are identical"
+            if num_elements > 1 and min_val != max_val:
+                # Convert to float32 for histogram calculation
+                tensor_float = tensor.to(torch.float32)
+                
+                num_bins = min(100, num_elements)
+                hist, bin_edges = torch.histogram(tensor_float, bins=num_bins)
+                stats['histogram'] = [hist.tolist(), bin_edges.tolist()]
             else:
-                stats['histogram'] = "Not enough elements for histogram"
+                stats['histogram'] = "Not enough unique elements for histogram"
         except Exception as e:
             stats['histogram'] = f"Histogram computation failed: {str(e)}"
         
@@ -72,10 +68,10 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
     def detect_anomalies(tensor: torch.Tensor, stats: Dict[str, Any]) -> str:
         if torch.isnan(tensor).any() or torch.isinf(tensor).any():
             return 'Contains NaN or Inf values'
-        if stats['std'] == 0:
+        if stats['std'] == 0 and stats['num_elements'] > 1:
             return 'Zero variance'
         if stats['std'] != 0:
-            z_scores = torch.abs((tensor - stats['mean']) / stats['std'])
+            z_scores = torch.abs((tensor.float() - stats['mean']) / stats['std'])
             outliers = torch.sum(z_scores > 6).item()
             if outliers > 0:
                 return f'Outliers detected: {outliers} values beyond 6 std dev'
@@ -84,19 +80,26 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
     def estimate_flops(tensor: torch.Tensor, key: str) -> int:
         if 'weight' in key:
             if tensor.dim() == 4:  # Convolutional layer
-                n, c, h, w = tensor.shape
-                # Assume square input, size based on tensor shape
-                input_size = max(h, w)
-                flops = 2 * n * c * h * w * input_size * input_size
+                out_channels, in_channels, kernel_h, kernel_w = tensor.shape
+                # Retrieve stride and padding from model if possible
+                # For this example, assume stride=1, padding=0
+                flops_per_instance = 2 * in_channels * kernel_h * kernel_w
+                output_size = ...  # Calculate based on input size, stride, padding
+                flops = flops_per_instance * output_size * output_size * out_channels
                 return flops
             elif tensor.dim() == 2:  # Fully connected layer
-                m, n = tensor.shape
-                return 2 * m * n
+                out_features, in_features = tensor.shape
+                return 2 * out_features * in_features
         return 0
+
+    def get_param_size(tensor: torch.Tensor) -> int:
+        return tensor.numel() * tensor.element_size()
+
 
     if model_visualizer.debug:
         logger.info(f"Processing {len(state_dict)} tensors...")
     
+    total_params = 0
     for key, tensor in state_dict.items():
         try:
             stats = calculate_tensor_stats(tensor)
@@ -119,14 +122,26 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
             if model_visualizer.debug and flops > 0:
                 logger.debug(f"Layer {key}: {flops:,} estimated FLOPs")
 
+            # Calculate parameter size
+            param_size = get_param_size(tensor)
+            total_params += param_size
+
+            # Detect anomalies
+            anomaly = detect_anomalies(tensor, stats)
+            if anomaly:
+                model_visualizer.anomalies[key] = anomaly
+
         except Exception as e:
             if model_visualizer.debug:
                 logger.error(f"Error processing tensor {key}: {e}")
+
+    model_visualizer.model_info['total_params'] = total_params
 
     if model_visualizer.debug:
         logger.info(f"Processed {len(model_visualizer.tensor_stats)} tensors.")
         logger.info(f"Layer types: {model_visualizer.layer_types}")
         logger.info(f"Estimated total FLOPs: {model_visualizer.model_info['estimated_flops']:,}")
+        logger.info(f"Total parameters: {total_params:,} bytes")
         logger.info(f"Number of anomalies detected: {len(model_visualizer.anomalies)}")
 
 # New function to demonstrate mixed precision and DataLoader usage
