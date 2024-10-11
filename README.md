@@ -94,3 +94,7 @@ We welcome contributions! Please submit a Pull Request on our GitHub repository.
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
+
+---
+
+TensorKiko is developed by the open-source community and takara.ai staff. The project is sponsored by [takara.ai](https://takara.ai).
