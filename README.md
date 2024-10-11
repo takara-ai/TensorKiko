@@ -18,14 +18,14 @@ To install TensorKiko with pip, run the following command:
 pip install tensorkiko
 ```
 
-#### Using Homebrew
+<!-- #### Using Homebrew
 
 To install TensorKiko using Homebrew, use the following commands:
 
 ```
 brew tap takara-ai/tensorkiko https://github.com/takara-ai/TensorKiko
 brew install tensorkiko
-```
+``` -->
 
 ## Usage
 
