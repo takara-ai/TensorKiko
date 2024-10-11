@@ -2,6 +2,12 @@
 
 A fast and intuitive tool for visualizing and analyzing model structures from safetensors files, supporting tree-based visualizations and detailed parameter analysis.
 
+## UI
+
+![View on the model information](https://github.com/takara-ai/TensorKiko/blob/main/media/images/ui/detail_tab.jpg)
+
+![View on the layer level with histograms](https://github.com/takara-ai/TensorKiko/blob/main/media/images/ui/layer_detail.jpg)
+
 ## Installation
 
 ### Requirements
