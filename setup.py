@@ -22,7 +22,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/takara-ai/TensorKiko",
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages(include=["tensorkiko*"]),
     include_package_data=True,
     package_data={
         'tensorkiko': [

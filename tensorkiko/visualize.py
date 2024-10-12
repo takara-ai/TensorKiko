@@ -1,4 +1,4 @@
-from tensorkiko.ascii_logo import display_logo
+from .modules.ascii_logo import display_logo
 display_logo()
 import argparse, os, sys, logging, webbrowser, http.server, socketserver, threading
 from dataclasses import dataclass, field
@@ -15,8 +15,8 @@ from urllib.parse import urlparse, parse_qs
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import importlib.resources as pkg_resources
 from importlib.resources import as_file, files
-from tensorkiko.model_loader import load_model, is_supported_format
-from tensorkiko.tensor_processing import process_tensors, get_param_size
+from .modules.model_loader import load_model, is_supported_format
+from .modules.tensor_processing import process_tensors, get_param_size
 
 @dataclass
 class ModelVisualizer:
