@@ -1,3 +1,5 @@
+from .modules.ascii_logo import display_logo
+display_logo()
 import argparse, os, sys, logging, webbrowser, http.server, socketserver, threading
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
@@ -11,10 +13,10 @@ from tqdm import tqdm
 import re
 from urllib.parse import urlparse, parse_qs
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from pkg_resources import resource_filename
-from tensorkiko.convert_ckpt_st import convert_ckpt_to_safetensors
-from tensorkiko.tensor_processing import process_tensors, get_param_size
-from tensorkiko.model_loader import load_model, is_supported_format
+import importlib.resources as pkg_resources
+from importlib.resources import as_file, files
+from .modules.model_loader import load_model, is_supported_format
+from .modules.tensor_processing import process_tensors, get_param_size
 
 @dataclass
 class ModelVisualizer:
@@ -38,10 +40,12 @@ class ModelVisualizer:
     def __post_init__(self):
         logging.basicConfig(level=logging.DEBUG if self.debug else logging.INFO, format='[%(levelname)s] %(message)s')
         self.logger = logging.getLogger(self.__class__.__name__)
-        template_dir = resource_filename('tensorkiko', 'static/templates')
-        self.template_env = Environment(loader=FileSystemLoader(searchpath=template_dir), autoescape=select_autoescape(['html', 'xml']))
-        template_path = os.path.join(template_dir, 'index.html')
-        if not os.path.exists(template_path):
+        # Use importlib.resources to get the template directory
+        template_dir = pkg_resources.files('tensorkiko') / 'static' / 'templates'
+        self.template_env = Environment(loader=FileSystemLoader(searchpath=str(template_dir)), autoescape=select_autoescape(['html', 'xml']))
+        
+        template_path = template_dir / 'index.html'
+        if not template_path.is_file():
             raise FileNotFoundError(f"Template file not found: {template_path}")
 
     def load_and_process_safetensors(self):
@@ -170,13 +174,14 @@ class ModelVisualizer:
                     self.end_headers()
                     self.wfile.write(self.server.html_content.encode('utf-8'))
                 elif self.path.startswith('/static/'):
-                    static_dir = resource_filename('tensorkiko', 'static')
-                    file_path = os.path.join(static_dir, self.path[8:])
-                    if os.path.exists(file_path) and os.path.isfile(file_path):
-                        with open(file_path, 'rb') as file:
-                            content = file.read()
+                    # Use importlib.resources to access static files
+                    static_file = files('tensorkiko') / 'static' / self.path[8:]
+                    if static_file.is_file():
+                        with as_file(static_file) as file_path:
+                            with open(file_path, 'rb') as file:
+                                content = file.read()
                         self.send_response(200)
-                        self.send_header("Content-type", self.guess_type(file_path))
+                        self.send_header("Content-type", self.guess_type(str(static_file)))
                         self.end_headers()
                         self.wfile.write(content)
                     else:

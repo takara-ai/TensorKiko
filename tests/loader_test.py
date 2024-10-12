@@ -3,7 +3,7 @@ import os
 import tempfile
 import torch
 import tensorflow as tf
-from model_loader import load_model, convert_to_safetensors, is_supported_format
+from tensorkiko.modules.model_loader import load_model, convert_to_safetensors, is_supported_format
 from safetensors.torch import save_file
 
 class TestModelLoader(unittest.TestCase):
