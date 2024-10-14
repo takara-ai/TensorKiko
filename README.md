@@ -2,6 +2,16 @@
 
 [![Release TensorKiko](https://github.com/takara-ai/TensorKiko/actions/workflows/release.yml/badge.svg)](https://github.com/takara-ai/TensorKiko/actions/workflows/release.yml)
 
+```
+  _______                        _  _______ _  ______
+ |__   __|                      | |/ /_   _| |/ / __ \
+    | | ___ _ __  ___  ___  _ __| ' /  | | | ' / |  | |
+    | |/ _ \ '_ \/ __|/ _ \| '__|  <   | | |  <| |  | |
+    | |  __/ | | \__ \ (_) | |  | . \ _| |_| . \ |__| |
+    |_|\___|_| |_|___/\___/|_|  |_|\_\_____|_|\_\____/
+
+```
+
 TensorKiko is a powerful and intuitive tool for visualizing and analyzing machine learning model structures. It supports various model formats and provides detailed insights into model architecture, parameters, and tensor statistics.
 
 ## Features

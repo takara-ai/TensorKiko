@@ -1,3 +1,4 @@
+# visualize.py
 from .modules.ascii_logo import display_logo
 display_logo()
 import argparse, os, sys, logging, webbrowser, http.server, socketserver, threading
@@ -16,7 +17,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 import importlib.resources as pkg_resources
 from importlib.resources import as_file, files
 from .modules.model_loader import load_model, is_supported_format
-from .modules.tensor_processing import process_tensors, get_param_size
+from .modules.tensor_processing import process_tensors, get_param_size, count_parameters, dtype_to_str
 
 @dataclass
 class ModelVisualizer:
@@ -94,9 +95,10 @@ class ModelVisualizer:
             self.update_model_info(state_dict)
 
     def update_model_info(self, state_dict):
-        self.model_info['total_params'] = sum(get_param_size(t) for t in state_dict.values())
-        self.model_info['memory_usage'] = round(self.model_info['total_params'] / (1024 * 1024), 2)
-        self.model_info['precisions'].update(str(t.dtype) for t in state_dict.values())
+        total_params, memory_usage = count_parameters(state_dict)
+        self.model_info['total_params'] = total_params
+        self.model_info['memory_usage'] = memory_usage
+        self.model_info['precisions'] = set(dtype_to_str(t.dtype) for t in state_dict.values())
 
     def _build_tree(self, root, key, tensor):
         parent = root
@@ -107,8 +109,14 @@ class ModelVisualizer:
             child = next((c for c in parent.children if c.name == part), None)
             if not child:
                 node_type = "layer" if i == len(parts) - 1 else "module"
-                node_attrs = {"type": node_type, "params": tensor.numel() if node_type == "layer" else 0,
-                              "shape": str(tensor.shape) if node_type == "layer" else "", "full_name": full_name}
+                node_attrs = {
+                    "type": node_type,
+                    "params": tensor.numel() if node_type == "layer" else 0,
+                    "shape": str(tensor.shape) if node_type == "layer" else "",
+                    "full_name": full_name,
+                    "dtype": dtype_to_str(tensor.dtype) if node_type == "layer" else "",
+                    "memory": get_param_size(tensor) if node_type == "layer" else 0
+                }
                 child = Node(part, parent=parent, **node_attrs)
             parent = child
 

@@ -1,30 +1,38 @@
+# tensor_processing.py
 import torch
 import numpy as np
 import logging
 from typing import Dict, Any, List, Tuple
-from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast
-import torch.nn.functional as F
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
 @torch.jit.script
-def calculate_basic_stats(t: torch.Tensor) -> Tuple[float, float, int, int, float, float]:
+def calculate_basic_stats(t: torch.Tensor) -> Tuple[float, float, int, int, float, float, torch.Tensor]:
     t_float = t.float()
     num_elements = t.numel()
     if num_elements == 0:
-        return (0.0, 0.0, 0, 0, 0.0, 0.0)
+        return (0.0, 0.0, 0, 0, 0.0, 0.0, t_float)
     min_val = float(t_float.min().item())
     max_val = float(t_float.max().item())
     num_zeros = int((t == 0).sum().item())
     mean = float(t_float.mean().item())
     std = float(t_float.std().item()) if num_elements > 1 else 0.0
-    return (min_val, max_val, num_zeros, num_elements, mean, std)
+    return (min_val, max_val, num_zeros, num_elements, mean, std, t_float)
+
+@torch.jit.script
+def fast_histogram(tensor: torch.Tensor, num_bins: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    min_val, max_val = tensor.min(), tensor.max()
+    if min_val == max_val:
+        return torch.tensor([tensor.numel()]), torch.tensor([min_val, max_val])
+    
+    range_val = max_val - min_val
+    bin_edges = torch.linspace(min_val, max_val, num_bins + 1)
+    hist = torch.histc(tensor, bins=num_bins, min=min_val, max=max_val)
+    return hist, bin_edges
 
 def calculate_tensor_stats(tensor: torch.Tensor) -> Dict[str, Any]:
-    tensor = tensor.cpu()
-    
-    min_val, max_val, num_zeros, num_elements, mean, std = calculate_basic_stats(tensor)
+    min_val, max_val, num_zeros, num_elements, mean, std, tensor_float = calculate_basic_stats(tensor.cpu())
     
     stats = {
         'min': min_val,
@@ -36,49 +44,72 @@ def calculate_tensor_stats(tensor: torch.Tensor) -> Dict[str, Any]:
         'dtype': str(tensor.dtype),
     }
     
-    try:
-        if num_elements > 1 and min_val != max_val:
-            tensor_float = tensor.to(torch.float32)
-            
+    if num_elements > 1 and min_val != max_val:
+        try:
             num_bins = min(100, num_elements)
-            hist, bin_edges = torch.histogram(tensor_float, bins=num_bins)
+            hist, bin_edges = fast_histogram(tensor_float, num_bins)
             stats['histogram'] = [hist.tolist(), bin_edges.tolist()]
-        else:
-            stats['histogram'] = "Not enough unique elements for histogram"
-    except Exception as e:
-        stats['histogram'] = f"Histogram computation failed: {str(e)}"
+        except Exception as e:
+            stats['histogram'] = f"Histogram computation failed: {str(e)}"
+    else:
+        stats['histogram'] = "Not enough unique elements for histogram"
     
-    return stats
+    return stats, tensor_float
 
-def detect_anomalies(tensor: torch.Tensor, stats: Dict[str, Any]) -> str:
-    if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+@torch.jit.script
+def detect_anomalies(tensor_float: torch.Tensor, mean: float, std: float, num_elements: int) -> str:
+    if torch.isfinite(tensor_float).all():
+        if std == 0 and num_elements > 1:
+            return 'Zero variance'
+        if std != 0:
+            z_scores = torch.abs((tensor_float - mean) / std)
+            outliers = torch.sum(z_scores > 6).item()
+            if outliers > 0:
+                return f'Outliers detected: {outliers} values beyond 6 std dev'
+    else:
         return 'Contains NaN or Inf values'
-    if stats['std'] == 0 and stats['num_elements'] > 1:
-        return 'Zero variance'
-    if stats['std'] != 0:
-        z_scores = torch.abs((tensor.float() - stats['mean']) / stats['std'])
-        outliers = torch.sum(z_scores > 6).item()
-        if outliers > 0:
-            return f'Outliers detected: {outliers} values beyond 6 std dev'
-    return None
+    return ""
 
-def estimate_flops(tensor: torch.Tensor, key: str) -> int:
+def estimate_flops(shape: Tuple[int, ...], key: str) -> int:
     if 'weight' in key:
-        if tensor.dim() == 4:  # Convolutional layer
-            out_channels, in_channels, kernel_h, kernel_w = tensor.shape
-            # Retrieve stride and padding from model if possible
-            # For this example, assume stride=1, padding=0
+        if len(shape) == 4:  # Convolutional layer
+            out_channels, in_channels, kernel_h, kernel_w = shape
             flops_per_instance = 2 * in_channels * kernel_h * kernel_w
             output_size = 1  # Placeholder; calculate based on input size, stride, padding
-            flops = flops_per_instance * output_size * output_size * out_channels
-            return flops
-        elif tensor.dim() == 2:  # Fully connected layer
-            out_features, in_features = tensor.shape
+            return flops_per_instance * output_size * output_size * out_channels
+        elif len(shape) == 2:  # Fully connected layer
+            out_features, in_features = shape
             return 2 * out_features * in_features
     return 0
 
+def count_parameters(state_dict: Dict[str, torch.Tensor]) -> Tuple[int, float]:
+    total_params = 0
+    total_bytes = 0
+    for tensor in state_dict.values():
+        total_params += tensor.numel()
+        total_bytes += get_param_size(tensor)
+    memory_usage = round(total_bytes / (1024 * 1024), 2)  # Convert to MB
+    return total_params, memory_usage
+
 def get_param_size(tensor: torch.Tensor) -> int:
-    return tensor.numel() * tensor.element_size()
+    if tensor.dtype == torch.qint8 or tensor.dtype == torch.quint8:
+        # For quantized tensors, we need to account for scale and zero_point
+        return tensor.numel() + 2 * 4  # 1 byte per element + 4 bytes each for scale and zero_point
+    elif hasattr(tensor, 'quant_state'):
+        # For dynamically quantized tensors (e.g., in PyTorch 2.0+)
+        return tensor.numel() * tensor.element_size() + 2 * 4
+    else:
+        return tensor.numel() * tensor.element_size()
+
+def dtype_to_str(dtype: torch.dtype) -> str:
+    if dtype in [torch.float16, torch.bfloat16, torch.float32, torch.float64]:
+        return str(dtype)
+    elif dtype in [torch.qint8, torch.quint8]:
+        return f"quantized({dtype})"
+    elif hasattr(dtype, 'quant_state'):
+        return f"dynamic_quantized({dtype})"
+    else:
+        return str(dtype)
 
 def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> None:
     if model_visualizer.debug:
@@ -96,16 +127,10 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
         logger.info(f"Processing {len(state_dict)} tensors...")
     
     total_params = 0
-    for key, tensor in state_dict.items():
+    for key, tensor in tqdm(state_dict.items(), desc="Processing tensors", unit="tensor"):
         try:
-            stats = calculate_tensor_stats(tensor)
+            stats, tensor_float = calculate_tensor_stats(tensor)
             model_visualizer.tensor_stats[key] = stats
-
-            if model_visualizer.debug:
-                if isinstance(stats['histogram'], str):
-                    logger.info(f"Histogram for {key}: {stats['histogram']}")
-                else:
-                    logger.info(f"Histogram computed for {key}")
 
             # Update layer types
             parts = key.split('.')
@@ -113,17 +138,11 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
             model_visualizer.layer_types[layer_type] = model_visualizer.layer_types.get(layer_type, 0) + 1
 
             # Estimate FLOPs
-            flops = estimate_flops(tensor, key)
+            flops = estimate_flops(tensor.shape, key)
             model_visualizer.model_info['estimated_flops'] += flops
-            if model_visualizer.debug and flops > 0:
-                logger.debug(f"Layer {key}: {flops:,} estimated FLOPs")
-
-            # Calculate parameter size
-            param_size = get_param_size(tensor)
-            total_params += param_size
 
             # Detect anomalies
-            anomaly = detect_anomalies(tensor, stats)
+            anomaly = detect_anomalies(tensor_float, stats['mean'], stats['std'], stats['num_elements'])
             if anomaly:
                 model_visualizer.anomalies[key] = anomaly
 
