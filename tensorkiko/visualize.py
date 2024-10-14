@@ -1,3 +1,4 @@
+# visualize.py
 from .modules.ascii_logo import display_logo
 display_logo()
 import argparse, os, sys, logging, webbrowser, http.server, socketserver, threading
