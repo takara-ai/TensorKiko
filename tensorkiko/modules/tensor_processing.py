@@ -82,8 +82,34 @@ def estimate_flops(shape: Tuple[int, ...], key: str) -> int:
             return 2 * out_features * in_features
     return 0
 
+def count_parameters(state_dict: Dict[str, torch.Tensor]) -> Tuple[int, float]:
+    total_params = 0
+    total_bytes = 0
+    for tensor in state_dict.values():
+        total_params += tensor.numel()
+        total_bytes += get_param_size(tensor)
+    memory_usage = round(total_bytes / (1024 * 1024), 2)  # Convert to MB
+    return total_params, memory_usage
+
 def get_param_size(tensor: torch.Tensor) -> int:
-    return tensor.numel() * tensor.element_size()
+    if tensor.dtype == torch.qint8 or tensor.dtype == torch.quint8:
+        # For quantized tensors, we need to account for scale and zero_point
+        return tensor.numel() + 2 * 4  # 1 byte per element + 4 bytes each for scale and zero_point
+    elif hasattr(tensor, 'quant_state'):
+        # For dynamically quantized tensors (e.g., in PyTorch 2.0+)
+        return tensor.numel() * tensor.element_size() + 2 * 4
+    else:
+        return tensor.numel() * tensor.element_size()
+
+def dtype_to_str(dtype: torch.dtype) -> str:
+    if dtype in [torch.float16, torch.bfloat16, torch.float32, torch.float64]:
+        return str(dtype)
+    elif dtype in [torch.qint8, torch.quint8]:
+        return f"quantized({dtype})"
+    elif hasattr(dtype, 'quant_state'):
+        return f"dynamic_quantized({dtype})"
+    else:
+        return str(dtype)
 
 def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> None:
     if model_visualizer.debug:
@@ -106,12 +132,6 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
             stats, tensor_float = calculate_tensor_stats(tensor)
             model_visualizer.tensor_stats[key] = stats
 
-            if model_visualizer.debug:
-                if isinstance(stats['histogram'], str):
-                    logger.info(f"Histogram for {key}: {stats['histogram']}")
-                else:
-                    logger.info(f"Histogram computed for {key}")
-
             # Update layer types
             parts = key.split('.')
             layer_type = parts[-2] if parts[-1] in {'weight', 'bias', 'running_mean', 'running_var'} else parts[-1]
@@ -120,12 +140,6 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
             # Estimate FLOPs
             flops = estimate_flops(tensor.shape, key)
             model_visualizer.model_info['estimated_flops'] += flops
-            if model_visualizer.debug and flops > 0:
-                logger.debug(f"Layer {key}: {flops:,} estimated FLOPs")
-
-            # Calculate parameter size
-            param_size = get_param_size(tensor.shape, tensor.dtype)
-            total_params += param_size
 
             # Detect anomalies
             anomaly = detect_anomalies(tensor_float, stats['mean'], stats['std'], stats['num_elements'])
