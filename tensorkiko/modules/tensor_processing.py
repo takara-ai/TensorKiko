@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Tuple
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast
 import torch.nn.functional as F
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def process_tensors(model_visualizer, state_dict: Dict[str, torch.Tensor]) -> No
         logger.info(f"Processing {len(state_dict)} tensors...")
     
     total_params = 0
-    for key, tensor in state_dict.items():
+    for key, tensor in tqdm(state_dict.items(), desc="Processing tensors", unit="tensor"):
         try:
             stats = calculate_tensor_stats(tensor)
             model_visualizer.tensor_stats[key] = stats
