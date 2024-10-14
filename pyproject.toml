@@ -4,37 +4,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tensorkiko"
-dynamic = ["version"]
+# Remove the dynamic = ["version"] line
 description = "A fast and intuitive tool for visualizing and analyzing model structures from safetensors files"
 readme = "README.md"
 authors = [
-    {name = "takara-ai", email = "jordan@takara.ai"},
+ {name = "takara-ai", email = "jordan@takara.ai"},
 ]
 license = {file = "LICENSE"}
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+ "Development Status :: 3 - Alpha",
+ "Intended Audience :: Developers",
+ "Programming Language :: Python :: 3",
+ "Programming Language :: Python :: 3.11",
+ "License :: OSI Approved :: MIT License",
+ "Operating System :: OS Independent",
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "anytree==2.12.1",
-    "filelock==3.16.1",
-    "fsspec==2024.9.0",
-    "Jinja2==3.1.4",
-    "MarkupSafe==3.0.0",
-    "mpmath==1.3.0",
-    "networkx==3.3",
-    "numpy==1.26.4",
-    "safetensors==0.4.5",
-    "six==1.16.0",
-    "sympy==1.13.3",
-    "torch==2.2.2",
-    "tqdm==4.66.5",
-    "typing_extensions==4.12.2",
+ "anytree==2.12.1",
+ "filelock==3.16.1",
+ "fsspec==2024.9.0",
+ "Jinja2==3.1.4",
+ "MarkupSafe==3.0.0",
+ "mpmath==1.3.0",
+ "networkx==3.3",
+ "numpy==1.26.4",
+ "safetensors==0.4.5",
+ "six==1.16.0",
+ "sympy==1.13.3",
+ "torch==2.2.2",
+ "tqdm==4.66.5",
+ "typing_extensions==4.12.2",
 ]
 
 [project.urls]
@@ -44,15 +44,14 @@ Repository = "https://github.com/takara-ai/TensorKiko.git"
 [project.scripts]
 tensorkiko = "tensorkiko.visualize:main"
 
-[tool.setuptools.dynamic]
-version = {env = "PACKAGE_VERSION"}
+# Remove the [tool.setuptools.dynamic] section
 
 [tool.setuptools.packages.find]
 include = ["tensorkiko*"]
 
 [tool.setuptools.package-data]
 tensorkiko = [
-    "static/templates/*.html",
-    "static/css/*.css",
-    "static/js/*.js",
+ "static/templates/*.html",
+ "static/css/*.css",
+ "static/js/*.js",
 ]
