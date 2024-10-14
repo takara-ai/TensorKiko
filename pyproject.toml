@@ -45,7 +45,7 @@ Repository = "https://github.com/takara-ai/TensorKiko.git"
 tensorkiko = "tensorkiko.visualize:main"
 
 [tool.setuptools.dynamic]
-version = {attr = "tensorkiko.__version__"}
+version = {env = "PACKAGE_VERSION"}
 
 [tool.setuptools.packages.find]
 include = ["tensorkiko*"]
