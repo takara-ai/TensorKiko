@@ -1,1 +1,1 @@
-__version__ = "0.1.9"
+__version__ = "0.0.0"  # This will be replaced by the CI process
