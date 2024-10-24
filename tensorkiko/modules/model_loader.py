@@ -1,24 +1,15 @@
-import torch
-import tensorflow as tf
-import numpy as np
-from safetensors import safe_open
-from safetensors.torch import save_file
 import os
 import logging
 from tqdm import tqdm
-import time
 import io
 
 logger = logging.getLogger(__name__)
 
 def load_pytorch_model(file_path):
-    """
-    Load a PyTorch model (.pt or .pth) and return its state dict.
-    """
+    import torch  # Lazy import
     try:
         file_size = os.path.getsize(file_path)
         
-        # Custom file-like object to track progress
         class ProgressReader(io.BytesIO):
             def __init__(self, file_path):
                 self.file_path = file_path
@@ -52,9 +43,7 @@ def load_pytorch_model(file_path):
         return None
 
 def load_tensorflow_model(file_path):
-    """
-    Load a TensorFlow model (.pb or .h5) and return a dict of its weights.
-    """
+    import tensorflow as tf  # Lazy import
     try:
         file_size = os.path.getsize(file_path)
         with tqdm(total=file_size, unit='B', unit_scale=True, desc="Loading TensorFlow model") as pbar:
@@ -67,9 +56,7 @@ def load_tensorflow_model(file_path):
         return None
 
 def load_safetensors_model(file_path):
-    """
-    Load a safetensors model and return its state dict.
-    """
+    from safetensors import safe_open  # Lazy import
     try:
         file_size = os.path.getsize(file_path)
         with tqdm(total=file_size, unit='B', unit_scale=True, desc="Loading safetensors model") as pbar:
@@ -84,11 +71,10 @@ def load_safetensors_model(file_path):
         return None
 
 def convert_to_safetensors(state_dict, output_path):
-    """
-    Convert a state dict to safetensors format and save it.
-    """
+    import torch  # Lazy import
+    import numpy as np  # Lazy import
+    from safetensors.torch import save_file  # Lazy import
     try:
-        # Convert numpy arrays to PyTorch tensors
         converted_state_dict = {}
         for key, value in state_dict.items():
             if isinstance(value, np.ndarray):
