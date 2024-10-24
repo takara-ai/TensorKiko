@@ -222,8 +222,12 @@ class ModelVisualizer:
 
     def generate_visualization(self):
         try:
+            self.logger.info("Starting the visualization process...")
+            self.logger.info("Preparing to load models. This may take a moment...")
+            
             self.logger.info("Loading models...")
             self.load_and_process_models()
+            
             for file_path, model_tree in self.model_trees.items():
                 self.tree_data = self.tree_to_dict(model_tree) if not self.no_tree else {}
                 model_name = os.path.basename(file_path)
